@@ -25,7 +25,10 @@ public sealed class LiteDbOutbox : IOutbox, IDisposable
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
-        _db = new LiteDatabase(new ConnectionString { Filename = path, Connection = ConnectionType.Direct });
+        // A mapper of our own, not BsonMapper.Global — see ZeusLogbookDb.NewMapper.
+        _db = new LiteDatabase(
+            new ConnectionString { Filename = path, Connection = ConnectionType.Direct },
+            new BsonMapper());
         _items = _db.GetCollection<OutboxItem>("outbox");
         _items.EnsureIndex(i => i.QsoId);
         _items.EnsureIndex(i => i.VisibleFromUtc);
@@ -130,7 +133,7 @@ public sealed class LiteDbOutbox : IOutbox, IDisposable
         lock (_gate) return _items.Find(i => i.Dead).ToList();
     }
 
-    /// <summary>LiteDB returns dates in local time; see StoredQso for why that matters.</summary>
+    /// <summary>LiteDB returns dates in local time; see ZeusLogbookDb for why that matters.</summary>
     private static DateTime Utc(DateTime v) => v.Kind switch
     {
         DateTimeKind.Utc => v,

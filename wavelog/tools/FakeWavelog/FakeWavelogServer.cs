@@ -65,6 +65,23 @@ public sealed class FakeWavelogServer : IDisposable
                              int StationId, string Adif)
     {
         public bool LotwConfirmed { get; set; }
+        public DateTime? LotwConfirmedOn { get; set; }
+
+        /// <summary>
+        /// What the export actually contains for this row.
+        ///
+        /// <para>A confirmation in Wavelog is a column on the QSO, and it shows
+        /// up in the export as extra ADIF fields on the same record — it is not
+        /// a separate object. Modelling it as a flag the export ignored would
+        /// let the sweep look like it worked while carrying nothing back.</para>
+        /// </summary>
+        public string Export()
+        {
+            if (!LotwConfirmed) return Adif;
+            var on = (LotwConfirmedOn ?? DateTime.UtcNow).ToString("yyyyMMdd");
+            return Adif[..Adif.LastIndexOf("<EOR>", StringComparison.Ordinal)] +
+                   $"<LOTW_QSL_RCVD:1>Y<LOTW_QSLRDATE:8>{on}<QSL_RCVD:1>Y<QSLRDATE:8>{on}<EOR>";
+        }
     }
 
     // ---- lifecycle ----------------------------------------------------------
@@ -188,7 +205,7 @@ public sealed class FakeWavelogServer : IDisposable
 
         var last = selected[^1].Id;
         var adif = new StringBuilder("<ADIF_VER:5>3.1.4<EOH>\n");
-        foreach (var r in selected) adif.Append(r.Adif).Append('\n');
+        foreach (var r in selected) adif.Append(r.Export()).Append('\n');
 
         Reply(ctx, 200, JsonSerializer.Serialize(new
         {
@@ -240,11 +257,14 @@ public sealed class FakeWavelogServer : IDisposable
     /// Confirm a QSO on LoTW — an UPDATE, which does not change the primary key.
     /// That is the whole reason the plugin needs a second, filtered sweep.
     /// </summary>
-    public void ConfirmOnLotw(string call)
+    public void ConfirmOnLotw(string call, DateTime? onUtc = null)
     {
         lock (_gate)
             foreach (var r in _rows.Where(r => r.Call == call.ToUpperInvariant()))
+            {
                 r.LotwConfirmed = true;
+                r.LotwConfirmedOn = onUtc ?? new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+            }
     }
 
     // ---- plumbing -----------------------------------------------------------

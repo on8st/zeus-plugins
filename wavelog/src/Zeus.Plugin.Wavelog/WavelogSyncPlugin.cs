@@ -13,19 +13,24 @@ using Zeus.Plugins.Contracts.Extensions;
 namespace Zeus.Plugin.Wavelog;
 
 /// <summary>
-/// The plugin. It <em>is</em> the logbook: the client keeps browsing, sorting,
-/// searching, editing and the QSL workflow, and calls through this interface.
+/// Keeps Zeus's native logbook synchronised with a Wavelog instance.
 ///
-/// <para>The write path is local-first and the network strictly downstream —
-/// <c>CreateAsync</c> stores, enqueues and returns, and never waits on Wavelog.
-/// A contact logged while the instance is rebooting is safe the moment this
-/// method returns.</para>
+/// <para>This plugin is <b>not</b> the logbook. It does not implement
+/// <c>ILogbookPluginV2</c> and never owns the operator's QSOs — the native
+/// logbook keeps doing that, along with browsing, editing, ADIF and QSL, all of
+/// which already work. This attaches to the same database and moves contacts
+/// in both directions.</para>
+///
+/// <para>Framing it this way removes the one assumption the engine repository
+/// could not settle: whether Zeus Link calls a logbook plugin at all, and what
+/// happens on uninstall. Uninstall this and the operator's log is untouched,
+/// because it was never ours.</para>
 /// </summary>
-public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBackendPlugin
+public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
 {
     private const string ConfigKey = "wavelog.config";
 
-    private LiteDbLogStore? _store;
+    private ZeusLogbookDb? _logbook;
     private LiteDbOutbox? _outbox;
     private LiteDbCursorStore? _cursors;
     private WavelogSyncService? _sync;
@@ -43,21 +48,15 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
     /// <summary>
     /// How long a cached copy of the configuration is trusted.
     ///
-    /// <para>Zeus owns the settings store — one LiteDB collection per plugin —
-    /// and it can rewrite a plugin's whole collection without telling it: that
-    /// is how the profile snapshot/restore system works. <c>PluginSettingsChanged</c>
-    /// exists but sits on the host's own store and is not exposed on
-    /// <see cref="IPluginContext"/>, so a plugin cannot subscribe to it.</para>
-    ///
-    /// <para>With no push available, holding our copy as authoritative would
-    /// mean a profile restore silently leaves the plugin talking to the old
-    /// instance with the old key until the next restart. So the store stays the
-    /// single source of truth and this is only a short-lived cache.</para>
+    /// <para>Zeus owns the settings store and can rewrite a plugin's whole
+    /// collection without telling it — that is how profile snapshot and restore
+    /// work. <c>PluginSettingsChanged</c> exists but sits on the host's own
+    /// store and is not exposed on <see cref="IPluginContext"/>, so a plugin
+    /// cannot subscribe. With no push available, holding our copy as
+    /// authoritative would leave the plugin talking to the old instance with the
+    /// old key until the next restart.</para>
     /// </summary>
     public static readonly TimeSpan ConfigTtl = TimeSpan.FromSeconds(30);
-
-    private LiteDbLogStore Store => _store
-        ?? throw new InvalidOperationException("the plugin has not been initialised");
 
     // ---- lifecycle ----------------------------------------------------------
 
@@ -66,26 +65,28 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
         _ctx = context;
         _log = context.Logger;
 
-        // The host data directory, not the plugin root: the plugin root goes
-        // away when the plugin is uninstalled, and the log must outlive that.
-        var root = string.IsNullOrWhiteSpace(context.HostDataDirectory)
+        var data = string.IsNullOrWhiteSpace(context.HostDataDirectory)
             ? context.PluginRootPath
             : context.HostDataDirectory;
-        var dir = Path.Combine(root, "wavelog-plugin");
 
-        _store = new LiteDbLogStore(Path.Combine(dir, "log.db"));
-        _outbox = new LiteDbOutbox(Path.Combine(dir, "outbox.db"));
-        _cursors = new LiteDbCursorStore(Path.Combine(dir, "cursor.db"));
+        // The operator's own logbook, in shared mode so the native plugin and
+        // this one see each other's writes.
+        _logbook = ZeusLogbookDb.ForDataDirectory(data);
+
+        // Ours alone, kept beside it rather than inside it.
+        var mine = Path.Combine(data, "wavelog-plugin");
+        _outbox = new LiteDbOutbox(Path.Combine(mine, "outbox.db"));
+        _cursors = new LiteDbCursorStore(Path.Combine(mine, "cursor.db"));
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
 
         _config = await LoadConfigAsync(ct).ConfigureAwait(false);
         _configReadUtc = DateTime.UtcNow;
 
         var transport = new HttpWavelogTransport(_http);
-        _sync = new WavelogSyncService(_store, _outbox, transport, CurrentConfig, _cursors, _log);
+        _sync = new WavelogSyncService(_logbook, _outbox, transport, CurrentConfig, _cursors, _log);
         _pump = new OutboxPump(_outbox, transport, CurrentConfig, RetryPolicy.Default, _log);
-        _pump.Delivered += id => _store?.MarkPushed(id);
-        _pump.DeadLettered += (id, reason) => _store?.MarkPushFailed(id, reason);
+        _pump.Delivered += id => _logbook?.MarkPushed(id);
+        _pump.DeadLettered += (id, reason) => _logbook?.MarkPushFailed(id, reason);
 
         if (context.Radio is { } radio)
             _radio = new RadioStatePublisher(radio, transport, CurrentConfig, SystemClock.Instance, "Zeus", _log);
@@ -93,29 +94,32 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
         _background = new CancellationTokenSource();
         StartBackground(_background.Token);
 
-        _log.LogInformation("wavelog: ready — store {Dir}, configured={Configured}", dir, _config.IsUsable);
+        _log.LogInformation("wavelog: attached to the native logbook ({Count} QSOs), configured={Configured}",
+            _logbook.Count(), _config.IsUsable);
     }
 
     private void StartBackground(CancellationToken ct)
     {
         _ = Task.Run(() => _pump!.RunAsync(TimeSpan.FromSeconds(20), ct), ct);
-        _ = Task.Run(() => PullLoopAsync(ct), ct);
+        _ = Task.Run(() => SyncLoopAsync(ct), ct);
         if (_radio is not null) { _radio.Start(); _ = Task.Run(() => _radio.RunAsync(ct), ct); }
     }
 
     /// <summary>
-    /// Two cadences, because one cursor cannot do both jobs: new QSOs arrive
-    /// above the primary key every few minutes, while confirmations are updates
-    /// that never move it and need the filtered sweep.
+    /// Three cadences. Newly logged contacts are noticed by polling, because the
+    /// host offers no event for them. New contacts from elsewhere arrive above
+    /// the primary key. Confirmations are updates that never move that key, so
+    /// they need their own filtered sweep and can afford to be slow.
     /// </summary>
-    private async Task PullLoopAsync(CancellationToken ct)
+    private async Task SyncLoopAsync(CancellationToken ct)
     {
         var lastSweep = DateTime.MinValue;
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                await _sync!.PullNewAsync(ct).ConfigureAwait(false);
+                _sync!.EnqueueNewLocalQsos();
+                await _sync.PullNewAsync(ct).ConfigureAwait(false);
                 if (DateTime.UtcNow - lastSweep > TimeSpan.FromHours(12))
                 {
                     await _sync.SweepConfirmationsAsync(ct).ConfigureAwait(false);
@@ -123,9 +127,9 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
                 }
             }
             catch (OperationCanceledException) { return; }
-            catch (Exception ex) { _log?.LogError(ex, "wavelog: pull loop failed"); }
+            catch (Exception ex) { _log?.LogError(ex, "wavelog: sync loop failed"); }
 
-            try { await Task.Delay(TimeSpan.FromMinutes(2), ct).ConfigureAwait(false); }
+            try { await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
         }
     }
@@ -136,23 +140,17 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
         _radio?.Dispose();
         _cursors?.Dispose();
         _outbox?.Dispose();
-        _store?.Dispose();
+        _logbook?.Dispose();
         _http?.Dispose();
-        _store = null;
         return Task.CompletedTask;
     }
 
     // ---- configuration ------------------------------------------------------
 
-    /// <summary>
-    /// The configuration, re-read from Zeus's store when the cache has aged out.
-    /// Synchronous because every caller is a hot-ish loop; the read is a single
-    /// indexed LiteDB lookup and happens at most twice a minute.
-    /// </summary>
     private WavelogConfig CurrentConfig()
     {
         if (DateTime.UtcNow - _configReadUtc <= ConfigTtl) return _config;
-        if (!_configGate.Wait(0)) return _config;          // another read in flight
+        if (!_configGate.Wait(0)) return _config;
         try
         {
             _config = LoadConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -207,17 +205,20 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("config", () => Results.Ok(new
+        endpoints.MapGet("config", () =>
         {
-            baseUrl = _config.BaseUrl,
-            stationProfileId = _config.StationProfileId,
-            pullStationIds = _config.PullStationIds,
-            pushEnabled = _config.PushEnabled,
-            pullEnabled = _config.PullEnabled,
-            radioEnabled = _config.RadioEnabled,
-            // Never the key itself — only whether one is set.
-            apiKeySet = !string.IsNullOrWhiteSpace(_config.ApiKey),
-        }));
+            var c = CurrentConfig();
+            return Results.Ok(new
+            {
+                baseUrl = c.BaseUrl,
+                stationProfileId = c.StationProfileId,
+                pullStationIds = c.PullStationIds,
+                pushEnabled = c.PushEnabled,
+                pullEnabled = c.PullEnabled,
+                radioEnabled = c.RadioEnabled,
+                apiKeySet = !string.IsNullOrWhiteSpace(c.ApiKey),   // never the key itself
+            });
+        });
 
         // Both verbs: the GPL sample panels only ever use GET and POST through
         // api.callBackend, so PUT alone would leave the panel unable to save.
@@ -229,8 +230,8 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
                 !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { error = "baseUrl must start with http:// or https://" });
 
-            // An absent key leaves the stored one alone, so a round-trip through
-            // the config UI cannot wipe it.
+            // An absent key leaves the stored one alone, so saving other fields
+            // can never wipe it.
             var key = body["apiKey"]?.GetValue<string>();
 
             _config = _config with
@@ -246,7 +247,7 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
             };
 
             await _ctx!.Settings.SetAsync(ConfigKey, StoredConfig.From(_config), ct).ConfigureAwait(false);
-            _configReadUtc = DateTime.UtcNow;      // our own write is already reflected
+            _configReadUtc = DateTime.UtcNow;
             return Results.Ok(new { ok = true });
         });
 
@@ -259,18 +260,23 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
                 : Results.BadRequest(new { error = outcome.Detail ?? outcome.Kind.ToString() });
         });
 
-        endpoints.MapGet("status", () => Results.Ok(new
+        endpoints.MapGet("status", () =>
         {
-            configured = CurrentConfig().IsUsable,
-            pending = _outbox?.PendingCount ?? 0,
-            failed = _outbox?.DeadLetterCount ?? 0,
-            lastError = _outbox?.DeadLettered().LastOrDefault()?.LastError,
-            cursor = _cursors?.GetFetchFromId() ?? 0,
-            // Naming the profiles makes "why isn't that contact here" a glance
-            // rather than an investigation.
-            pullStationIds = _config.PullStationIds,
-            pushStationProfileId = _config.StationProfileId,
-        }));
+            var c = CurrentConfig();
+            return Results.Ok(new
+            {
+                configured = c.IsUsable,
+                qsosInLogbook = _logbook?.Count() ?? 0,
+                pending = _outbox?.PendingCount ?? 0,
+                failed = _outbox?.DeadLetterCount ?? 0,
+                lastError = _outbox?.DeadLettered().LastOrDefault()?.LastError,
+                cursor = _cursors?.GetFetchFromId() ?? 0,
+                // Naming the profiles turns "why isn't that contact here" into a
+                // glance rather than an investigation.
+                pullStationIds = c.PullStationIds,
+                pushStationProfileId = c.StationProfileId,
+            });
+        });
 
         endpoints.MapPost("test", async (CancellationToken ct) =>
         {
@@ -292,60 +298,4 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
                 : Results.BadRequest(new { error = report.Error });
         });
     }
-
-    // ---- ILogbookPlugin -----------------------------------------------------
-
-    /// <summary>
-    /// Store, enqueue, return. The network is never on this path: a QSO logged
-    /// while Wavelog is unreachable is safe the moment this returns.
-    /// </summary>
-    public async Task<LogbookEntrySnapshot> CreateAsync(LogbookNewEntry entry, CancellationToken ct = default)
-    {
-        var saved = await Store.CreateAsync(entry, ct).ConfigureAwait(false);
-        try { _sync?.EnqueueForPush(saved); }
-        catch (Exception ex) { _log?.LogError(ex, "wavelog: could not queue {Id} for upload", saved.Id); }
-        return saved;
-    }
-
-    public Task<LogbookPage> GetEntriesAsync(int skip, int take, CancellationToken ct = default)
-        => Store.GetEntriesAsync(skip, take, ct);
-
-    public Task<IReadOnlyList<LogbookEntrySnapshot>> GetByIdsAsync(
-        IEnumerable<string> ids, CancellationToken ct = default) => Store.GetByIdsAsync(ids, ct);
-
-    public Task<LogbookWorkedSummary?> GetWorkedSummaryAsync(
-        string callsign, int recentTake, CancellationToken ct = default)
-        => Store.GetWorkedSummaryAsync(callsign, recentTake, ct);
-
-    public Task<IReadOnlyList<string>> GetDigitalWorkedCallsignsAsync(CancellationToken ct = default)
-        => Store.GetDigitalWorkedCallsignsAsync(ct);
-
-    public Task<bool> UpdateQrzUploadStatusAsync(string id, string qrzLogId, CancellationToken ct = default)
-        => Store.UpdateQrzUploadStatusAsync(id, qrzLogId, ct);
-
-    public Task<int> DeleteAsync(IEnumerable<string> ids, CancellationToken ct = default)
-        => Store.DeleteAsync(ids, ct);
-
-    public Task<string> ExportAdifAsync(IEnumerable<string>? ids = null, CancellationToken ct = default)
-        => Store.ExportAdifAsync(ids, ct);
-
-    public Task<LogbookExportFileResult> ExportAdifToFileAsync(
-        string? directory = null, IEnumerable<string>? ids = null, CancellationToken ct = default)
-        => Store.ExportAdifToFileAsync(directory, ids, ct);
-
-    public Task<LogbookImportResult> ImportAdifAsync(string adifText, CancellationToken ct = default)
-        => Store.ImportAdifAsync(adifText, ct);
-
-    // ---- ILogbookPluginV2 ---------------------------------------------------
-
-    public Task<LogbookEntrySnapshot?> UpdateAsync(
-        string id, LogbookEntryUpdate update, CancellationToken ct = default)
-        => Store.UpdateAsync(id, update, ct);
-
-    public Task<int> UpdateQslStatusAsync(
-        IReadOnlyList<LogbookQslStatusUpdate> updates, CancellationToken ct = default)
-        => Store.UpdateQslStatusAsync(updates, ct);
-
-    public Task<IReadOnlyList<string>> GetAllTagsAsync(CancellationToken ct = default)
-        => Store.GetAllTagsAsync(ct);
 }

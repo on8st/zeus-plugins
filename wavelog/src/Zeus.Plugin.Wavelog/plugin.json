@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "on8st.wavelog",
-  "name": "Wavelog Logger",
+  "name": "Wavelog Synchroniser",
   "version": "0.1.0",
   "author": "on8st",
-  "description": "Logbook backed by a local store, mirrored to a Wavelog instance. Pushes every QSO, pulls contacts logged by other apps, sweeps back LoTW and QSL confirmations, and can publish live rig state.",
+  "description": "Keeps Zeus's native logbook in step with a Wavelog instance. Pushes every contact you log, imports contacts logged by other apps, sweeps LoTW and QSL confirmations back, and can publish live rig state. It is not a logbook and never owns your QSOs \u2014 the native logbook keeps doing that.",
   "homepage": "https://github.com/on8st/zeus-plugins",
   "license": "GPL-2.0-or-later",
   "sdk": {
@@ -13,7 +13,7 @@
   },
   "entrypoint": {
     "assembly": "Zeus.Plugin.Wavelog.dll",
-    "type": "Zeus.Plugin.Wavelog.WavelogLogbookPlugin"
+    "type": "Zeus.Plugin.Wavelog.WavelogSyncPlugin"
   },
   "capabilities": [
     "PersistSettings",
@@ -32,7 +32,7 @@
     "panels": [
       {
         "id": "wavelog.config",
-        "title": "Wavelog",
+        "title": "Wavelog Sync",
         "icon": "Upload",
         "slot": "workspace.tools",
         "category": "tools"

@@ -151,6 +151,12 @@ function WavelogPanel({ api }) {
 
   return h('div', { style: css.panel },
 
+    // Say plainly what this is. An operator who thinks the plugin *is* their
+    // logbook will read every button here as riskier than it is.
+    h('div', { style: css.note },
+      'Keeps Zeus\u2019s own logbook in step with Wavelog, both directions. '
+      + 'It does not hold your log \u2014 Zeus does, as always.'),
+
     // ---- connection
     h('div', { style: css.section }, 'connection'),
 
@@ -256,6 +262,9 @@ function WavelogPanel({ api }) {
     status
       ? h('div', { style: { ...css.note, display: 'flex', flexDirection: 'column', gap: 3 } },
           h('div', null, status.configured ? 'configured' : 'not configured yet'),
+          // Worth showing: if this reads zero against a log full of contacts,
+          // the plugin has attached to the wrong file and is quietly idle.
+          h('div', null, `${status.qsosInLogbook} QSO(s) in Zeus\u2019s logbook`),
           h('div', null, `${status.pending} waiting to upload · ${status.failed} failed`),
           h('div', null, `pull cursor at ${status.cursor}`),
           // Naming the profiles turns "why isn't that contact here" into a
@@ -282,7 +291,7 @@ function WavelogPanel({ api }) {
 
     h('div', { style: css.note },
       'Reconciles both directions by inserting what is missing. It never deletes: '
-      + 'a QSO removed in Wavelog but present here stays. Dry run first.'),
+      + 'a QSO removed in Wavelog but present in Zeus stays. Dry run first.'),
 
     h('div', { style: css.row },
       h('button', {

@@ -89,7 +89,7 @@ public class PackagingTests
         // so a typo here must fail the build rather than the install.
         var type = Manifest().RootElement
             .GetProperty("entrypoint").GetProperty("type").GetString()!;
-        Assert.Equal(typeof(WavelogLogbookPlugin).FullName, type);
+        Assert.Equal(typeof(WavelogSyncPlugin).FullName, type);
     }
 
     [Fact]

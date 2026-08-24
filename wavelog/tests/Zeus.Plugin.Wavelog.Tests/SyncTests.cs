@@ -2,7 +2,6 @@
 using FakeWavelog;
 using Zeus.Plugin.Wavelog.Storage;
 using Zeus.Plugin.Wavelog.Sync;
-using Zeus.Plugins.Contracts.Extensions;
 
 namespace Zeus.Plugin.Wavelog.Tests;
 
@@ -11,6 +10,11 @@ namespace Zeus.Plugin.Wavelog.Tests;
 /// the most important in the phase: an imported QSO must not enter the outbox,
 /// or a resync enqueues the whole log to be pushed back at a Wavelog that will
 /// deduplicate every one of them.
+///
+/// <para>Everything runs against a local Wavelog of our own (see
+/// <see cref="FakeWavelogServer"/>) and against a real logbook file that
+/// <see cref="NativeLogbook"/> — standing in for Zeus's own plugin — writes
+/// into. No live server is touched at any point.</para>
 /// </summary>
 public sealed class SyncTests : IDisposable
 {
@@ -19,7 +23,8 @@ public sealed class SyncTests : IDisposable
     private readonly FakeClock _clock = new(new DateTime(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc));
     private readonly FakeWavelogServer _wavelog = new();
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
-    private readonly LiteDbLogStore _store;
+    private readonly NativeLogbook _zeus;
+    private readonly ZeusLogbookDb _logbook;
     private readonly LiteDbOutbox _outbox;
     private readonly MemoryCursorStore _cursor = new();
 
@@ -27,14 +32,16 @@ public sealed class SyncTests : IDisposable
     {
         Directory.CreateDirectory(_dir);
         _wavelog.Start();
-        _store = new LiteDbLogStore(Path.Combine(_dir, "log.db"));
+        _zeus = NativeLogbook.InDataDirectory(_dir);
+        _logbook = ZeusLogbookDb.ForDataDirectory(_dir);
         _outbox = new LiteDbOutbox(Path.Combine(_dir, "outbox.db"), _clock);
     }
 
     public void Dispose()
     {
-        _store.Dispose(); _outbox.Dispose(); _wavelog.Dispose(); _http.Dispose();
-        try { Directory.Delete(_dir, true); } catch { }
+        _zeus.Dispose(); _logbook.Dispose(); _outbox.Dispose();
+        _wavelog.Dispose(); _http.Dispose();
+        try { Directory.Delete(_dir, true); } catch { /* best effort */ }
     }
 
     private WavelogConfig Config => new()
@@ -44,11 +51,7 @@ public sealed class SyncTests : IDisposable
     };
 
     private WavelogSyncService NewSync() => new(
-        _store, _outbox, new HttpWavelogTransport(_http), () => Config, _cursor);
-
-    private static LogbookNewEntry Qso(string call, DateTime? when = null, string band = "20m") =>
-        new(call, null, 14.074, band, "USB", "59", "59",
-            QsoDateTimeUtc: when ?? new DateTime(2026, 8, 24, 9, 0, 0, DateTimeKind.Utc));
+        _logbook, _outbox, new HttpWavelogTransport(_http), () => Config, _cursor);
 
     // ---- THE trap -----------------------------------------------------------
 
@@ -64,6 +67,21 @@ public sealed class SyncTests : IDisposable
     }
 
     [Fact]
+    public async Task An_imported_qso_is_not_queued_by_the_next_scan_either()
+    {
+        // The scan finds new work by absence, so the import has to have left a
+        // row behind — otherwise the trap springs thirty seconds later instead
+        // of immediately, which is worse, not better.
+        _wavelog.AddQsoFromAnotherApp("G4XYZ", new DateTime(2026, 8, 24, 10, 0, 0, DateTimeKind.Utc), "40m", "CW");
+
+        var sync = NewSync();
+        await sync.PullNewAsync(default);
+        sync.EnqueueNewLocalQsos();
+
+        Assert.Equal(0, _outbox.PendingCount);
+    }
+
+    [Fact]
     public async Task A_full_resync_does_not_enqueue_what_it_just_imported()
     {
         for (var i = 0; i < 5; i++)
@@ -72,8 +90,23 @@ public sealed class SyncTests : IDisposable
 
         await NewSync().ResyncAsync(dryRun: false, default);
 
-        Assert.Equal(5, (await _store.GetEntriesAsync(0, 50)).TotalCount);
+        Assert.Equal(5, _logbook.Count());
         Assert.Equal(0, _outbox.PendingCount);
+    }
+
+    // ---- what the operator sees in Zeus ------------------------------------
+
+    [Fact]
+    public async Task A_pulled_qso_shows_up_in_zeus_own_logbook()
+    {
+        // Not in a store of ours: in the collection the native logbook reads, so
+        // it is browsable, editable and exportable with everything else.
+        _wavelog.AddQsoFromAnotherApp("G4XYZ", new DateTime(2026, 8, 24, 10, 0, 0, DateTimeKind.Utc), "40m", "CW");
+
+        await NewSync().PullNewAsync(default);
+
+        Assert.Equal(1, _zeus.Count());
+        Assert.Equal("G4XYZ", Assert.Single(_logbook.All()).Callsign);
     }
 
     // ---- the cursor ---------------------------------------------------------
@@ -116,29 +149,36 @@ public sealed class SyncTests : IDisposable
     [Fact]
     public async Task A_confirmation_reaches_the_local_qso_through_the_sweep()
     {
-        var saved = await _store.CreateAsync(Qso("DL1ABC"));
-        _wavelog.AddQsoFromAnotherApp("DL1ABC", saved.QsoDateTimeUtc, "20m", "SSB");
-        await NewSync().PullNewAsync(default);          // cursor moves past it
+        var logged = _zeus.Log("DL1ABC", new DateTime(2026, 8, 24, 9, 0, 0, DateTimeKind.Utc), "20m", "SSB");
+        var sync = NewSync();
+        sync.EnqueueNewLocalQsos();                     // Zeus's QSO, now known to us
+
+        _wavelog.AddQsoFromAnotherApp("DL1ABC", logged.QsoDateTimeUtc, "20m", "SSB");
+        await sync.PullNewAsync(default);                // cursor moves past it
 
         _wavelog.ConfirmOnLotw("DL1ABC");
 
         var incremental = await NewSync().PullNewAsync(default);
-        Assert.Equal(0, incremental.Fetched);           // invisible to the cursor
+        Assert.Equal(0, incremental.Fetched);            // invisible to the cursor
 
         var sweep = await NewSync().SweepConfirmationsAsync(default);
         Assert.Equal(1, sweep.Fetched);
+        Assert.Equal(1, sweep.Updated);
+        Assert.NotNull(_zeus.ById(logged.Id)!.LotwQslRcvdUtc);
     }
 
     [Fact]
     public async Task The_sweep_does_not_duplicate_the_qso_it_confirms()
     {
-        var saved = await _store.CreateAsync(Qso("DL1ABC"));
-        _wavelog.AddQsoFromAnotherApp("DL1ABC", saved.QsoDateTimeUtc, "20m", "SSB");
+        var logged = _zeus.Log("DL1ABC", new DateTime(2026, 8, 24, 9, 0, 0, DateTimeKind.Utc), "20m", "SSB");
+        NewSync().EnqueueNewLocalQsos();
+
+        _wavelog.AddQsoFromAnotherApp("DL1ABC", logged.QsoDateTimeUtc, "20m", "SSB");
         _wavelog.ConfirmOnLotw("DL1ABC");
 
         await NewSync().SweepConfirmationsAsync(default);
 
-        Assert.Equal(1, (await _store.GetEntriesAsync(0, 50)).TotalCount);
+        Assert.Equal(1, _logbook.Count());
     }
 
     // ---- profiles -----------------------------------------------------------
@@ -155,7 +195,7 @@ public sealed class SyncTests : IDisposable
     [Fact]
     public async Task A_dry_run_reports_both_directions_and_writes_nothing()
     {
-        await _store.CreateAsync(Qso("LOCALONLY"));
+        _zeus.Log("LOCALONLY");
         _wavelog.AddQsoFromAnotherApp("THEIRS", DateTime.UtcNow, "20m", "SSB");
 
         var report = await NewSync().ResyncAsync(dryRun: true, default);
@@ -163,42 +203,57 @@ public sealed class SyncTests : IDisposable
         Assert.True(report.DryRun);
         Assert.Equal(1, report.MissingHere);
         Assert.Equal(1, report.MissingThere);
-        Assert.Equal(1, (await _store.GetEntriesAsync(0, 50)).TotalCount);   // nothing imported
-        Assert.Equal(0, _outbox.PendingCount);                                // nothing queued
+        Assert.Equal(1, _logbook.Count());          // nothing imported
+        Assert.Equal(0, _outbox.PendingCount);      // nothing queued
+    }
+
+    [Fact]
+    public async Task A_dry_run_sees_a_gap_in_a_logbook_it_has_never_scanned()
+    {
+        // The plugin was installed a moment ago, so nothing is tracked yet. If
+        // the report started from our own rows rather than from the log, it
+        // would tell the operator their untouched backlog was fully synced.
+        for (var i = 0; i < 3; i++) _zeus.Log($"NEVERSEEN{i}", new DateTime(2024, 5, 1, 0, i, 0, DateTimeKind.Utc));
+
+        var report = await NewSync().ResyncAsync(dryRun: true, default);
+
+        Assert.Equal(3, report.MissingThere);
+        Assert.Equal(0, _outbox.PendingCount);
     }
 
     [Fact]
     public async Task Applying_a_resync_fills_both_gaps()
     {
-        await _store.CreateAsync(Qso("LOCALONLY"));
+        _zeus.Log("LOCALONLY");
         _wavelog.AddQsoFromAnotherApp("THEIRS", DateTime.UtcNow, "20m", "SSB");
 
         await NewSync().ResyncAsync(dryRun: false, default);
 
-        Assert.Equal(2, (await _store.GetEntriesAsync(0, 50)).TotalCount);
-        Assert.Equal(1, _outbox.PendingCount);          // only the local-only one
+        Assert.Equal(2, _logbook.Count());
+        Assert.Equal(1, _outbox.PendingCount);      // only the local-only one
     }
 
     [Fact]
     public async Task Running_a_resync_twice_changes_nothing_the_second_time()
     {
-        await _store.CreateAsync(Qso("LOCALONLY"));
+        _zeus.Log("LOCALONLY");
         _wavelog.AddQsoFromAnotherApp("THEIRS", DateTime.UtcNow, "20m", "SSB");
 
         await NewSync().ResyncAsync(dryRun: false, default);
         var second = await NewSync().ResyncAsync(dryRun: false, default);
 
         Assert.Equal(0, second.MissingHere);
-        Assert.Equal(2, (await _store.GetEntriesAsync(0, 50)).TotalCount);
+        Assert.Equal(2, _logbook.Count());
     }
 
     [Fact]
     public async Task A_resync_never_deletes_a_qso_wavelog_has_forgotten()
     {
         // "Full sync" must not be read as "make identical".
-        await _store.CreateAsync(Qso("ONLY_HERE"));
+        _zeus.Log("ONLY_HERE");
         await NewSync().ResyncAsync(dryRun: false, default);
-        Assert.Equal(1, (await _store.GetEntriesAsync(0, 50)).TotalCount);
+        Assert.Equal(1, _logbook.Count());
+        Assert.Equal(1, _zeus.Count());
     }
 
     // ---- switched off -------------------------------------------------------
@@ -207,7 +262,7 @@ public sealed class SyncTests : IDisposable
     public async Task Nothing_is_pulled_before_the_plugin_is_configured()
     {
         var sync = new WavelogSyncService(
-            _store, _outbox, new HttpWavelogTransport(_http), () => new WavelogConfig(), _cursor);
+            _logbook, _outbox, new HttpWavelogTransport(_http), () => new WavelogConfig(), _cursor);
         Assert.False((await sync.PullNewAsync(default)).Ran);
     }
 }

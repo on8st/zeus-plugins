@@ -19,7 +19,10 @@ public sealed class LiteDbCursorStore : ICursorStore, IDisposable
     {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        _db = new LiteDatabase(new ConnectionString { Filename = path, Connection = ConnectionType.Direct });
+        // A mapper of our own, not BsonMapper.Global — see ZeusLogbookDb.NewMapper.
+        _db = new LiteDatabase(
+            new ConnectionString { Filename = path, Connection = ConnectionType.Direct },
+            new BsonMapper());
         _rows = _db.GetCollection<Row>("cursor");
     }
 

@@ -1,6 +1,6 @@
-# Wavelog logger plugin — design and TDD plan
+# Wavelog synchroniser — design and TDD plan
 
-Push every logged QSO to a Wavelog instance. Design notes, not yet built.
+Keep Zeus's own logbook and a Wavelog instance in step, both directions.
 
 - Framework reference: [`docs/plugin-framework-how-to.md`](../../../../docs/plugin-framework-how-to.md)
 - Target: `wavelog.on8st.be` — Wavelog (Cloudlog fork) in Docker on the
@@ -11,105 +11,162 @@ Push every logged QSO to a Wavelog instance. Design notes, not yet built.
 
 ## 1. The constraint that determines the design
 
-The framework has **no "QSO logged" event** (how-to §11). The only seam that
-sees every contact is `ILogbookPluginV2`.
+The framework has **no "QSO logged" event** (how-to §11). Nothing tells a plugin
+that a contact was made.
 
-**That seam is the storage port, not the experience.** Its shape is
-`CreateAsync` / `UpdateAsync` / `DeleteAsync` / `GetEntriesAsync(skip, take)` /
-`GetByIdsAsync` / `GetWorkedSummaryAsync` / ADIF import and export — a
-data-access contract. Browsing, sorting, searching, the edit dialogs and the
-QSL workflow all stay in Zeus Link and call *through* these methods. You
-implement roughly fourteen methods over a store; you rebuild nothing the
-operator sees.
+The obvious way round that is `ILogbookPluginV2` — the storage seam, and the
+only interface in the contracts that sees every QSO. This design took that route
+first, and then left it.
 
-Three details make the job smaller than it first appears:
+### Why the logbook seam was the wrong seam
 
-- **There is no search, sort or filter parameter anywhere.** The only listing
-  method is `GetEntriesAsync(skip, take)`, so the client filters and sorts
-  client-side over what it has pulled. Your store must serve bulk reads
-  quickly, but needs no query language and no indexes beyond callsign.
-- **`AdifFields` is a `Dictionary<string,string>`** on both the new entry and
-  the snapshot, so arbitrary ADIF fields round-trip. Nothing is lost that the
-  typed model does not cover.
-- **ADIF export and import are part of the contract regardless.** The mapper is
-  not Wavelog-specific cost — `ExportAdifAsync` owes it anyway, and the Wavelog
-  push reuses it.
+Implementing it means *becoming* the logbook: fourteen methods over a store, and
+from then on the operator's contacts live in this plugin's database. Everything
+downstream inherits three problems that no amount of care inside the plugin
+fixes.
 
-What you cannot lean on is the built-in *store*: there is no handle to it on
-`IPluginContext`, and it lives in the closed client. Do not open
-`zeus-logbook.db` directly either — undocumented schema, and the client may
-hold it open.
+- **The consumer cannot be verified.** `ILogbookPlugin` is never called anywhere
+  in the engine repository — Zeus Link calls it, and Zeus Link is proprietary.
+  Whether it calls a logbook plugin at all, when, whether a fallback to the
+  built-in exists, what happens on uninstall with entries in it: none of that is
+  knowable from source. The whole design rested on it.
+- **Uninstall becomes the operator's problem.** A plugin that holds the log is a
+  plugin that cannot be casually removed.
+- **It rebuilds what already works.** Browsing, sorting, editing, ADIF, QSL and
+  the export path all exist and are correct. Reimplementing their storage buys
+  nothing an operator can see.
 
-Since storage is what moves:
+### What replaces it
 
-> The plugin's first duty is **being a good logbook**. Pushing to Wavelog is a
-> side effect that must never be able to fail a QSO.
+The native logbook plugin — `org.openhpsdr.logbook` — stores the published
+contract record, `LogbookEntrySnapshot`, in a collection called `entries` inside
+`zeus-logbook.db`, using LiteDB's default mapper. All three facts were read out
+of its GPL assembly, not guessed.
 
-That kills the obvious shape — `CreateAsync` → POST → return. The Wavelog box
-can be rebooting mid-contest; logging must still work. So the write path is
-local-first, with the network strictly downstream:
+So there is nothing to migrate and no second copy to keep honest. **Attach to
+that file as a second handle and synchronise it.**
 
 ```
-CreateAsync ──► store locally ──► enqueue outbox ──► return snapshot
-                                        │
-                    background pump ────┴──► Wavelog   (retry, backoff)
+Zeus Link ──► native logbook plugin ──► zeus-logbook.db  ── entries
+                                              ▲   │
+                                              │   │ scan every 30s
+                              insert / confirm│   ▼
+                                        ┌─────┴──────────┐
+                                        │  synchroniser  │── wavelog_sync
+                                        └───────┬────────┘
+                                                │ outbox, retry
+                                                ▼
+                                             Wavelog
 ```
 
-**The outbox is the heart of this plugin**, not the HTTP call. It is also where
-the interesting bugs live, which is why it is tested first.
+Two conditions make this safe, and both are tested rather than assumed:
+
+- **Both handles must open `Connection=shared`.** The reference does. Two
+  `Direct` handles open without error and then silently diverge — no exception,
+  two different views of the operator's log.
+- **Our bookkeeping must not join their document.** Where a QSO came from and
+  whether it has been uploaded live in a *separate collection*, `wavelog_sync`.
+  Adding fields to the stored QSO would leak them into ADIF exports through
+  `AdifFields`, and a round-trip through the reference's own code could drop
+  them.
+
+Uninstall this and the log is untouched, because it was never ours. That is the
+whole argument for the reframe.
+
+### Polling, and why it is not a compromise
+
+With no event, new work is found by absence: an entry with no row in
+`wavelog_sync` has not been dealt with. That is a scan every thirty seconds.
+
+It is the only mechanism available, and it happens to be the better one anyway —
+a station with years of contacts logged before the plugin existed has its whole
+backlog picked up on the first scan, rather than the plugin quietly starting
+from now.
+
+### The rule that survives from the first design
+
+> Wavelog must never be able to fail, delay, or alter a QSO.
+
+Under the logbook design that was a rule to be held: the write path went through
+the plugin, so `CreateAsync` → POST → return had to be refused deliberately.
+Here it is structural. Zeus writes the contact through its own plugin; this code
+is not on that path at all and could not block it if it tried.
+
+The network stays strictly downstream:
+
+```
+Zeus logs ──► entries ──► [scan] ──► outbox ──► pump ──► Wavelog  (retry, backoff)
+```
+
+**The outbox is still the heart of this plugin**, not the HTTP call. It is also
+where the interesting bugs live, which is why it is tested first.
 
 ### One alternative, explicitly rejected
 
-Knowing the seam is storage, Wavelog could *be* the store — `GetEntriesAsync`
-querying it on every browse. Don't. Cloudlog-family APIs are write-oriented,
-`GetEntriesAsync` sits on the browsing path, and it would put the network
-between the operator and their own log — the exact failure this section exists
-to prevent. Local store as source of truth, Wavelog as mirror.
+Wavelog could *be* the store, queried on every browse. Don't. Cloudlog-family
+APIs are write-oriented, browsing is a UI path, and it would put the network
+between the operator and their own log. Zeus's database stays the source of
+truth; Wavelog is the meeting point with everything else.
 
 ## 2. Shape
 
 ```
 Domain — pure, no I/O                    ← most tests live here
   AdifMapper       LogbookEntrySnapshot → ADIF record
-  WavelogRequest   config + adif        → url, body
+  AdifParser       ADIF text            → records
   RetryPolicy      attempt + failure    → delay | dead-letter
+  SyncState        the dedup key Wavelog compares on
 
 Ports
-  IWavelogTransport   PostAsync(request, ct) → WavelogResult
+  IWavelogTransport   post / get contacts / station info / radio
   IOutbox             Enqueue / Lease / Ack / Fail
-  ILogStore           the logbook itself
+  ICursorStore        where the pull cursor lives
   IClock
 
 Adapters
   HttpWavelogTransport   System.Net.Http, stub-handler tested
   LiteDbOutbox           temp-file tested
-  LiteDbLogStore
+  LiteDbCursorStore
+  ZeusLogbookDb          the second handle on Zeus's own logbook
   SystemClock
 
 Plugin
-  WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBackendPlugin, IUiPlugin
+  WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
 ```
+
+Note what is *not* in that last line: no `ILogbookPluginV2`. The plugin declares
+a backend and a panel, and nothing else.
 
 Dependencies stay minimal on purpose: everything except `Zeus.Plugins.Contracts`
 and the BCL is loaded from the plugin's own directory (how-to §10), so
-`System.Net.Http` is preferred over any third-party client.
+`System.Net.Http` is preferred over any third-party client. LiteDB is the one
+exception, and is not a choice — it is the format the file is already in.
 
 ## 3. Manifest
+
+The file is **`plugin.json`**. Prose in the how-to suggested `manifest.json`;
+every GPL sample plugin the registry distributes ships `plugin.json`, and the
+host reads that name. A plugin with the wrong filename is simply never
+discovered, and nothing in the C# would say so — which is why a packaging test
+asserts it.
 
 ```jsonc
 {
   "schemaVersion": 1,
   "id": "on8st.wavelog",
-  "name": "Wavelog Logger",
+  "name": "Wavelog Synchroniser",
   "version": "0.1.0",
   "license": "GPL-2.0-or-later",
   "sdk":        { "abi": 1, "minVersion": "1.4.0" },
-  "entrypoint": { "assembly": "Zeus.Plugin.Wavelog.dll" },
+  "entrypoint": { "assembly": "Zeus.Plugin.Wavelog.dll",
+                  "type": "Zeus.Plugin.Wavelog.WavelogSyncPlugin" },
   "capabilities": ["NetworkAccess"],
   "permissions":  { "network": true },
-  "ui": { "panels": [
-    { "id": "wavelog", "title": "Wavelog", "slot": "settings",
-      "icon": "Upload", "category": "plugins" } ] }
+  "ui": { "modules": ["ui/wavelog.es.js"],
+          "panels": [
+            { "id": "wavelog.config", "title": "Wavelog Sync",
+              "slot": "workspace.tools", "icon": "Upload",
+              "category": "tools" } ] }
 }
 ```
 
@@ -127,14 +184,25 @@ plugin-scoped and host-persisted, and the config `GET` endpoint never returns it
 |---|---|
 | `GET /api/plugins/on8st.wavelog/config` | URL, profiles pulled, profile pushed to, **key redacted** |
 | `GET /api/plugins/on8st.wavelog/profiles` | `station_info` passthrough — what this key can reach |
-| `PUT /api/plugins/on8st.wavelog/config` | set them |
+| `POST /api/plugins/on8st.wavelog/config` | set them (`PUT` also accepted) |
 | `POST /api/plugins/on8st.wavelog/test` | one round-trip against the instance |
-| `GET /api/plugins/on8st.wavelog/status` | pending / failed counts, last error |
+| `GET /api/plugins/on8st.wavelog/status` | logbook size, pending / failed counts, cursor, last error |
 | `POST /api/plugins/on8st.wavelog/retry` | re-queue the dead-letter items |
 | `POST /api/plugins/on8st.wavelog/resync` | full reconcile; `{"dryRun": true}` reports without writing |
 
-This is the whole product. The UI panel is a form over these, and is
-deliberately last (§7).
+`POST` as well as `PUT` on `config` is not tidiness: the sample panels only ever
+call `GET` and `POST` through `api.callBackend`, so `PUT` alone would leave the
+panel unable to save.
+
+The panel (§11) is a form over exactly these, which is why it could be written
+without touching the C#.
+
+**Configuration is re-read, not cached authoritatively.** Zeus owns the settings
+store and can rewrite a plugin's whole collection without telling it — that is
+how profile snapshot and restore work. `PluginSettingsChanged` exists but sits on
+the host's own store and is not on `IPluginContext`, so a plugin cannot
+subscribe. With no push available, a cached copy would leave the plugin talking
+to the old instance with the old key until restart. A 30-second TTL closes it.
 
 ## 5. TDD order
 
@@ -144,44 +212,68 @@ red-first.
 **1 · `AdifMapperTests` — pure, table-driven.**
 Frequency to MHz at six decimals · band derivation · mode and submode split ·
 UTC handling · RST defaults · **optional fields omitted rather than emitted
-empty** · `<eor>` · awkward characters in a comment · callsign casing.
+empty** · `<eor>` · awkward characters in a comment · callsign casing ·
+**lengths in UTF-8 bytes, not characters**.
 
-**2 · `OutboxTests` — the ones that catch real failures.**
+**2 · `AdifParserTests` — the reading half.**
+Length-prefixed fields · a wrong length is a format error, not a silent
+truncation · trailing material without `<EOR>` is dropped.
+
+**3 · `OutboxTests` — the ones that catch real failures.**
 Enqueue survives a restart · a lease is exclusive · ack removes · nack
 reschedules with backoff · **an item in flight when the process dies is
 redelivered, not lost** · poison items dead-letter after N attempts.
 
-**3 · `RetryPolicyTests` — the distinction that matters.**
+**4 · `RetryPolicyTests` — the distinction that matters.**
 `401`/`403` dead-letters *immediately*: the key or station profile is wrong and
 retrying forever only hides it. `5xx` and timeouts back off. `400` dead-letters
-with the response body kept for the status endpoint.
+with the response body kept for the status endpoint. A `200` carrying HTML is a
+proxy error page, not a success.
 
-**4 · `WavelogClientTests` — stub `HttpMessageHandler`.**
+**5 · `TransportTests` — stub `HttpMessageHandler`.**
 Correct URL and body · a non-JSON response is a failure, not a success · status
 surfaced.
 
-**5 · `PumpTests` — fake clock, fake transport.**
+**6 · `PumpTests` — fake clock, fake transport.**
 Drains in order · backs off while the instance is down · recovers and catches
 up · never loses an item.
 
-**6 · `LogbookFacadeTests` — these two encode the design decision.**
-`CreateAsync` returns **without touching the transport**. `CreateAsync` still
-succeeds when the transport throws.
+**7 · `ZeusLogbookDbTests` — attaching to somebody else's database.**
+A QSO written by a *separate handle* is visible without reopening · timestamps
+come back UTC, not local · an entry with no sync row is unseen, and stops being
+unseen once tracked · **our fields never appear in their document** · a
+confirmation changes the confirmation and nothing else · uninstalling would
+leave the log intact.
 
-**7 · `SyncTests` — the pull half, and the trap.**
-An imported QSO **does not enter the outbox** · the cursor advances to the
-returned `lastfetchedid` and never regresses · a confirmation sweep updates QSL
-fields on an existing entry without duplicating it · full resync is idempotent,
-so running it twice inserts nothing the second time · full resync never deletes ·
-two resyncs cannot run at once · a QSO in a profile that is not selected is not
-imported, and the status endpoint says which profiles are being synced.
+These use `NativeLogbook`, a stand-in for Zeus's own plugin: its own
+`LiteDatabase`, opened the way the reference opens it, writing contract records
+into `zeus-logbook.db`. Every test starts from a log this plugin did not create,
+which is the only way the shared-mode claim can be held at all.
 
-**8 · `ConfigEndpointTests`.**
-`GET` never echoes the key · `PUT` validates the URL.
+**8 · `NeverInTheWayTests` — the property the reframe is worth having.**
+The scan never touches the network · a QSO logged while Wavelog is down is still
+the operator's QSO · an unconfigured plugin queues nothing **and forgets
+nothing**, so the backlog goes up the day a key is pasted in · the same QSO
+noticed twice is queued once · a backlog logged before the plugin existed goes
+up on the first scan.
 
-Integration tests — real LiteDB, real `wavelog.on8st.be` — come last and live in
-a separate opt-in project, so the default test run needs no network and no
-radio.
+**9 · `SyncTests` — the pull half, and the trap.**
+An imported QSO **does not enter the outbox**, and is not queued by the next
+scan either · a pulled QSO shows up in *Zeus's own* logbook · the cursor advances
+to the returned `lastfetchedid` and never regresses · a confirmation sweep
+updates QSL fields on an existing entry without duplicating it · a dry run sees
+a gap in a logbook it has never scanned · full resync is idempotent and never
+deletes · a QSO in a profile that is not selected is not imported.
+
+**10 · `PackagingTests` — what actually ships.**
+The manifest is `plugin.json` · the entrypoint type exists · every declared UI
+module is in the output · `LiteDB.dll` and the deps file are present ·
+`Zeus.Plugins.Contracts.dll` is **not**.
+
+All of it runs against `tools/FakeWavelog`, a local stand-in implementing the
+endpoints and semantics read out of Wavelog's own source. Integration tests
+against a real instance come last and live in a separate opt-in project, so the
+default run needs no network, no radio, and no live server.
 
 ## 6. Wavelog's API — verified against source
 
@@ -325,11 +417,18 @@ the cursor set to zero.
 
 ### The trap
 
-**Imported QSOs must bypass the outbox.** Import is a different write path from
-`CreateAsync`. Without that, a full resync enqueues the entire log for push-back
-— thousands of no-op inserts hammering Wavelog to achieve nothing, while the
-outbox churns and the status endpoint reports a backlog that never means
-anything. This is the single most important test in §5.
+**Imported QSOs must never be pushed back.** They land in the same collection
+everything else lands in, so nothing about their shape distinguishes them —
+only the sync row this plugin writes beside them, marked `wavelog`. Without
+that mark, the next scan sees a contact it has not queued, queues it, and a full
+resync enqueues the entire imported log for push-back: thousands of no-op
+inserts hammering Wavelog to achieve nothing, while the outbox churns and the
+status endpoint reports a backlog that never means anything.
+
+It has to hold at two moments, not one — immediately, and again on the next
+scan thirty seconds later. Both are tested.
+
+This is the single most important test in §5.
 
 ## 8. Features — one plugin, opt-in
 
@@ -393,54 +492,45 @@ competing for one screen is worse than one.
 
 ## 9. Phases
 
-### Phase 1 — log and radio
+### Phase 1 — synchronise
 
-The product. Everything an operator needs, configured over HTTP.
+The product. Everything an operator needs.
 
 | Milestone | Contains |
 |---|---|
-| 1a — store | `ILogbookPluginV2` over a local store · ADIF mapper · export and import |
+| 1a — attach | second handle on `zeus-logbook.db` · sync collection · scan for unseen |
 | 1b — push | outbox · pump · retry policy · `POST /api/qso` |
 | 1c — pull | incremental `fetchfromid` loop · confirmation sweep · profile selection |
 | 1d — repair | full resync, dry run first |
 | 1e — radio | live rig state to `POST /api/radio` |
 
-1a is shippable on its own: a working logbook that syncs nothing. Each
-milestone after it adds one loop, and each is independently revertible by a
-config toggle.
+Each milestone adds one loop, and each is independently revertible by a config
+toggle.
 
 ### The gate — phase 1 must be proven before phase 2 starts
 
-Phase 1 rests on assumptions the engine repository **cannot verify** (§12): that
-Zeus Link calls `ILogbookPluginV2` at all, when it calls it, whether a fallback
-to the built-in exists, and what happens on uninstall. None of that is knowable
-from source. It has to be established by running it.
+The reframe removed the largest unknown: nothing now depends on what Zeus Link
+does with a logbook plugin. What remains has to be established by running it.
 
-Phase 2 adds network to a UI path. Doing that on top of an unproven store
+Phase 2 adds network to a UI path. Doing that on top of an unproven attachment
 compounds two risks that are much easier to diagnose apart.
 
 So phase 2 does not start until all of these hold:
 
-- **Zeus Link actually uses the plugin as its logbook** — the single biggest
-  unknown, and unanswerable any other way
-- **Browsing, sorting, searching, editing and deleting all work** through it,
-  with the client's UI unchanged
-- **Performance is acceptable at real log size** — `GetEntriesAsync` is on the
-  browsing path and the client appears to filter client-side, so it may pull
-  more than a page
+- **the plugin actually attaches** — `/status` reports the same number of QSOs
+  the logbook view shows. If it reports zero against a full log, it has opened
+  the wrong file, or one side is not in shared mode
 - a QSO logged in Zeus **appears in Wavelog** within the poll interval
-- a QSO logged **elsewhere** — web UI, WSJT-X, another logger — appears in Zeus
-- a **LoTW confirmation** reaches Zeus after the daily sweep
+- a QSO logged **elsewhere** — web UI, WSJT-X, another logger — appears in
+  Zeus's own logbook view, browsable and editable like any other
+- a **LoTW confirmation** reaches Zeus after the sweep, and changes nothing else
+  about the contact
 - **full resync dry-run reports zero drift** after a week of normal use
-- **uninstall and reinstall leaves the log intact** and exportable
+- **uninstalling the plugin leaves the log complete** and exportable
 
 Run it on a **scratch profile first**, then on the real log, and let it soak
 under ordinary operating before calling it proven. The dry-run resync is the
 cheap weekly check: if it keeps reporting nothing to do, the loops are working.
-
-If any criterion fails, the gap is worth closing before adding anything on top —
-the same discipline as any other migration: the fallback existing is not the
-same as the design working.
 
 ### Phase 2 — enrichment
 
@@ -451,52 +541,81 @@ is exercised by tests rather than assumed.
 
 ### Phase 3 — the panel
 
-Blocked on external information, not on us — the UI contract belongs to Zeus
-Link and is not in the engine repository (§11). Phase 3 starts when upstream
-answers or a registry plugin publishes its source. Until then phases 1 and 2 are
-fully usable over the endpoints in §4.
+Done, and no longer last. It was deferred while the UI contract looked
+unknowable; it turned out to be readable from the GPL sample plugins the
+registry distributes (§11).
 
-Sequencing them this way means the only phase that can stall is the one that
-adds no capability.
+## 10. Settled during phase 1
 
-## 10. Open questions to settle before the first test
+**Per-entry upload state.** Open at the start; settled by the reframe. It cannot
+live on the QSO, because the QSO is not ours — so `wavelog_sync` carries the
+source, the dedup key, the upload time and the last error, keyed by entry id.
+The status endpoint reports from it and `retry` works from it.
 
-**Per-entry upload state.** The contract already has
-`UpdateQrzUploadStatusAsync`, so there is precedent for tracking per-QSO upload
-status. Mirror it: store `wavelogUploadedAt` and a failure reason, so the status
-endpoint can report honestly and `retry` has something to work from.
+**Where the plugin's own files live.** The outbox and cursor go in a
+`wavelog-plugin` directory *beside* the logbook in the host data directory, not
+inside the plugin root — so an uninstall or an upgrade does not take the queue
+with it.
 
-## 11. The UI panel comes last, and why
+**A mapper per database, not `BsonMapper.Global`.** The global one is
+process-wide mutable state with a cache that is not safe to populate from
+several threads at once; two databases opened concurrently can hand back a
+half-built entity mapping, which surfaces much later as *"member not found"* on
+a field that plainly exists. It showed up as a flaky test, which is the only
+reason it was found. A fresh mapper has identical defaults, so the stored
+document is byte-for-byte what the reference writes — it just cannot be raced,
+or reconfigured by anything else sharing the load context.
 
-`ui.modules` and panel slots are consumed by Zeus Link, which is proprietary and
-not in this repository. Its shipped bundle carries an explicit *"may not be …
-decompiled, disassembled, or reverse engineered"* clause, so it is not a
-legitimate source for reconstructing the contract.
+**Dates.** LiteDB stores UTC and hands back local. For a logbook that is not
+cosmetic: the dedup key is the timestamp to the minute, so an unconverted value
+makes Wavelog treat the same contact as a new one. Normalised on every read and
+write, with a regression test.
 
-The layout does suggest one thing legitimately: the bundle ships
-`wwwroot/zeus-sdk/react.js` and `react-jsx-runtime.js` as separate importable
-modules, which is what you do when third-party modules are meant to import your
-framework rather than bundle their own.
+## 11. The panel, and how the contract was learned
 
-To learn the contract properly: ask upstream — issues are enabled on
-`Zeus-SDR/station-engine` and the one prior issue was handled — or find a plugin
-in the registry (`https://downloads.zeussdr.com/plugins/registry.json`) that
-publishes its source.
+`ui.modules` and panel slots are consumed by Zeus Link, which is proprietary.
+Its shipped bundle carries an explicit *"may not be … decompiled, disassembled,
+or reverse engineered"* clause, so it is not a legitimate source.
 
-Until then the plugin is **fully usable without a panel**, configured over the
-endpoints in §4. That is also why the panel was the least test-covered part of
-the plan: deferring it costs nothing.
+The registry is. `https://downloads.zeussdr.com/plugins/registry.json` publishes
+sample plugins under **GPL-2.0-or-later**, with source — plugins that exist to
+be read. That is the intended documentation, not a workaround, and reading it
+answered everything:
+
+- an ES module whose **default export is `register(api)`**
+- `api.registerPanel({ id, component })` — and the id must match the manifest's
+  panel id, or the panel silently never appears
+- `api.callBackend(method, path, body)` returns a `fetch` Response and is
+  already prefixed with the plugin's route
+- React arrives from the host as a **bare specifier**, which is why the bundle
+  ships `zeus-sdk/react.js` as a separate importable module
+- real tool panels use `slot: "workspace.tools"` with `category: "tools"`.
+  `"settings"` was invented earlier in this design and appears nowhere
+
+The panel is written with `React.createElement` rather than JSX, so the plugin
+needs no build step: no npm, no bundler, no lockfile. A packaging test asserts
+the registered id matches the manifest, because that failure mode is silent.
 
 ## 12. Risks worth stating up front
 
-**You are replacing the store, not the logbook UI.** The operator's experience
-is unaffected; what moves is the data. Your QSOs live in this plugin's storage.
-Before running it against a real log: confirm ADIF export works, and that
-uninstalling the plugin leaves the data recoverable. Write the export test
-before the import path, not after.
+**You are writing into a collection another plugin owns.** That is the deal the
+reframe makes, and it is a real exposure: if a future Zeus renames a field,
+changes the mapper or moves the file, this attaches to the wrong thing rather
+than failing loudly. The names and the document shape are asserted in tests, so
+a change is caught the moment the reference is re-read — but it has to be
+re-read. Treat a Zeus upgrade as a reason to run the test suite, not just the
+plugin.
 
-**The engine cannot verify the consumer.** `ILogbookPlugin` is never called
-anywhere in the engine repository — Zeus Link calls it. When it is called,
-whether a fallback to the built-in exists, what happens if the plugin is
-uninstalled with entries in it: none of that is knowable from the GPL source.
-Establish it empirically on a scratch profile before trusting it with a real log.
+**Both sides must open shared.** If a future Zeus switches to `Direct`, the two
+handles stop seeing each other with no error at all — the plugin reports a
+healthy empty queue while nothing syncs. `/status` reporting the logbook count is
+the cheap tell.
+
+**The fake encodes our reading of Wavelog, not Wavelog.** 151 passing tests prove
+the plugin does what this document says. They cannot prove this document read the
+API right. Only a run against a real instance does that, and it is a gate item,
+not a unit test.
+
+**Confirmations are the one place we edit somebody else's record.** Deliberately
+the narrowest edit in the plugin — QSL and LoTW fields only, matched on the dedup
+key. Worth re-reading if it ever grows.

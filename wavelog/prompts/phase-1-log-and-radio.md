@@ -2,6 +2,13 @@
 
 Paste this into a session started in `~/Repos/on8st/zeus-plugins/wavelog`.
 
+> **Superseded in part.** This prompt was written when the plugin was going to
+> *replace* the logbook via `ILogbookPluginV2`. It no longer does: it attaches to
+> Zeus's own `zeus-logbook.db` as a second handle and synchronises it. Milestone
+> 1a and every mention of `CreateAsync` below read as history. The push, pull,
+> repair and radio milestones are unchanged. `docs/design/source/design.md` is
+> the current specification — follow that where the two disagree.
+
 ---
 
 Build **phase 1** of the Wavelog logger plugin for the Zeus SDR station engine.

@@ -3,24 +3,20 @@
 using Microsoft.Extensions.Logging;
 using Zeus.Plugin.Wavelog.Adif;
 using Zeus.Plugin.Wavelog.Storage;
-using Zeus.Plugins.Contracts.Extensions;
 
 namespace Zeus.Plugin.Wavelog.Sync;
 
 /// <summary>
-/// Everything that moves QSOs between the local store and Wavelog: the push
-/// side's enqueue, the incremental pull, the confirmation sweep and the full
-/// resync.
+/// Keeps Zeus's native logbook and a Wavelog instance in step.
 ///
-/// <para>The rule that runs through all of it: <b>a QSO that arrived from
-/// Wavelog is never enqueued for pushing back.</b> Import is a different write
-/// path from Create for exactly that reason — without it a full resync would
-/// enqueue the entire log, and because Wavelog deduplicates, thousands of
-/// no-op inserts would achieve nothing while the operator watched a backlog
-/// that never meant anything.</para>
+/// <para>Three movements: new contacts out, new contacts in, and confirmations
+/// back. The rule running through all of it — <b>a QSO that arrived from
+/// Wavelog is never pushed back</b> — is why the inbound path is separate from
+/// everything else, and why a full resync cannot turn into thousands of no-op
+/// inserts against an instance that deduplicates every one.</para>
 /// </summary>
 public sealed class WavelogSyncService(
-    LiteDbLogStore store,
+    ZeusLogbookDb logbook,
     IOutbox outbox,
     IWavelogTransport transport,
     Func<WavelogConfig> config,
@@ -29,12 +25,28 @@ public sealed class WavelogSyncService(
 {
     public const int PullBatch = 200;
 
-    /// <summary>Queue a locally-created QSO. Called after the store has it.</summary>
-    public void EnqueueForPush(LogbookEntrySnapshot entry)
+    /// <summary>
+    /// Queue anything the native logbook has that we have not seen.
+    ///
+    /// <para>The host gives plugins no "QSO logged" event, so this is how a new
+    /// contact is noticed: it has no row in our own collection yet. Called on a
+    /// timer — the cost is one indexed scan, and it is the only mechanism
+    /// available.</para>
+    /// </summary>
+    public int EnqueueNewLocalQsos()
     {
         var settings = config();
-        if (!settings.IsUsable || !settings.PushEnabled) return;
-        outbox.Enqueue(entry.Id, AdifMapper.ToRecord(entry));
+        if (!settings.IsUsable || !settings.PushEnabled) return 0;
+
+        var queued = 0;
+        foreach (var entry in logbook.Unseen())
+        {
+            logbook.Track(entry, QsoSource.Zeus);
+            outbox.Enqueue(entry.Id, AdifMapper.ToRecord(entry));
+            queued++;
+        }
+        if (queued > 0) log?.LogInformation("wavelog: queued {Count} new QSO(s) for upload", queued);
+        return queued;
     }
 
     // ---- loop 1: new QSOs, by cursor ---------------------------------------
@@ -52,24 +64,21 @@ public sealed class WavelogSyncService(
         if (result is null || result.Count == 0 || string.IsNullOrWhiteSpace(result.Adif))
             return PullReport.Nothing;
 
-        // Marked as inbound, so these rows never enter the outbox.
-        var imported = await store.ImportFromWavelogAsync(result.Adif!, ct).ConfigureAwait(false);
+        var (imported, duplicates, _) = logbook.ImportFromWavelog(result.Adif!);
         cursors.SetFetchFromId(result.LastFetchedId);
 
         log?.LogInformation("wavelog: pulled {Count}, imported {Imported}, cursor now {Cursor}",
-            result.Count, imported.ImportedCount, result.LastFetchedId);
+            result.Count, imported, result.LastFetchedId);
 
-        return new PullReport(true, result.Count, imported.ImportedCount,
-            imported.DuplicateCount, result.LastFetchedId, null);
+        return new PullReport(true, result.Count, imported, duplicates, result.LastFetchedId, null);
     }
 
     // ---- loop 2: confirmations, which the cursor cannot see -----------------
 
     /// <summary>
-    /// LoTW and eQSL confirmations arrive as <em>updates</em>, and an update
-    /// does not change the primary key — so the incremental cursor is
-    /// permanently blind to them. This sweep asks for confirmed QSOs of any age
-    /// instead, and reconciles them against what is already held.
+    /// LoTW and eQSL confirmations arrive as <em>updates</em>, and an update does
+    /// not change the primary key — so the incremental cursor is permanently
+    /// blind to them. This sweep asks for confirmed QSOs of any age instead.
     /// </summary>
     public async Task<PullReport> SweepConfirmationsAsync(CancellationToken ct)
     {
@@ -83,7 +92,7 @@ public sealed class WavelogSyncService(
         if (result is null || result.Count == 0 || string.IsNullOrWhiteSpace(result.Adif))
             return PullReport.Nothing;
 
-        var updated = store.ApplyConfirmations(result.Adif!);
+        var updated = logbook.ApplyConfirmations(result.Adif!);
         log?.LogInformation("wavelog: confirmation sweep saw {Count}, updated {Updated}",
             result.Count, updated);
 
@@ -95,15 +104,14 @@ public sealed class WavelogSyncService(
     /// <summary>
     /// Reconcile in both directions. A gap can be on either side and the
     /// operator cannot know which, so one action covers both — and it only ever
-    /// inserts. A QSO deleted in Wavelog but present locally stays: "full sync"
-    /// must not be read as "make identical".
+    /// inserts. A QSO deleted in Wavelog but present in the logbook stays: "full
+    /// sync" must not be read as "make identical".
     /// </summary>
     public async Task<ResyncReport> ResyncAsync(bool dryRun, CancellationToken ct)
     {
         var settings = config();
         if (!settings.IsUsable) return ResyncReport.NotConfigured;
 
-        // ---- what Wavelog has that we do not
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var missingHere = 0;
         var cursor = 0;
@@ -116,21 +124,21 @@ public sealed class WavelogSyncService(
 
             foreach (var record in AdifParser.Parse(page.Adif!))
             {
-                var key = store.DedupKeyOf(record);
+                var key = logbook.DedupKeyOf(record);
                 if (key is null) continue;
                 seen.Add(key);
-                if (!store.HasDedupKey(key)) missingHere++;
+                if (!logbook.HasDedupKey(key)) missingHere++;
             }
 
-            if (!dryRun)
-                await store.ImportFromWavelogAsync(page.Adif!, ct).ConfigureAwait(false);
-
+            if (!dryRun) logbook.ImportFromWavelog(page.Adif!);
             cursor = page.LastFetchedId;
         }
 
-        // ---- what we have that Wavelog does not
-        var missingThere = store.LocalOnly(seen);
+        // Anything the logbook holds that we have never tracked is local-only by
+        // definition, so make sure it is accounted for before comparing.
+        if (!dryRun) EnqueueNewLocalQsos();
 
+        var missingThere = logbook.LocalOnly(seen);
         if (!dryRun)
         {
             if (cursor > 0) cursors.SetFetchFromId(cursor);

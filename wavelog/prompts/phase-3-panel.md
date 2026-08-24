@@ -2,6 +2,11 @@
 
 Paste this into a session started in `~/Repos/on8st/zeus-plugins/wavelog`.
 
+> **Done.** The blocking condition below was met: the registry publishes GPL
+> sample plugins with source, which is a legitimate reading of the UI contract.
+> The panel is built — `src/Zeus.Plugin.Wavelog/ui/wavelog.es.js`. Kept for the
+> record of why it was deferred.
+
 **This phase is blocked on external information.** Check the unblocking
 condition below before starting.
 

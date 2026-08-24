@@ -1,4 +1,4 @@
-<title>Wavelog Logger</title>
+<title>Wavelog Synchroniser</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap">
@@ -126,9 +126,9 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 <div class="wrap">
 
 <header class="masthead">
-  <p class="eyebrow">Design · not built · station-engine v2.0.9</p>
-  <h1>Wavelog Logger</h1>
-  <p class="standfirst">A station-engine plugin that pushes every logged QSO to a Wavelog instance. Its entire shape is forced by one fact about the framework — and the design is mostly about refusing to let the network anywhere near the operator.</p>
+  <p class="eyebrow">Design · built, never run inside Zeus · station-engine v2.0.9</p>
+  <h1>Wavelog Synchroniser</h1>
+  <p class="standfirst">A station-engine plugin that keeps Zeus’s <em>own</em> logbook and a Wavelog instance in step, both directions. It began as a logbook replacement; the more interesting design is the one that gives the logbook back.</p>
   <p class="docmeta">
     <span><b>Plugin id</b> on8st.wavelog</span>
     <span><b>Target</b> wavelog.on8st.be</span>
@@ -138,78 +138,101 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 
 <div class="thesis">
   <span class="pill">Thesis</span>
-  <span>The framework has no “QSO logged” event, so the only seam is <code>ILogbookPluginV2</code> — and that seam is the <em>storage port</em>, not the experience. The plugin becomes the store; the client keeps browsing, sorting and editing. Its first duty is therefore being a good store, and pushing to Wavelog is a side effect that must never be able to fail a QSO.</span>
+  <span>The framework has no “QSO logged” event, and the only interface that sees every contact — <code>ILogbookPluginV2</code> — makes the plugin <em>become</em> the logbook, resting the whole design on what a proprietary client does with it. It does not have to. The native logbook stores the published contract record in a LiteDB file the plugin can open as a second handle. So: don’t replace the log, attach to it. Uninstall this and the operator’s log is untouched, because it was never ours.</span>
 </div>
 
 <section>
-  <div class="sechead"><span class="secnum">§1</span><h2>The write path</h2></div>
+  <div class="sechead"><span class="secnum">§1</span><h2>Attach, don’t replace</h2></div>
   <div class="prose">
-    <h3>What you are actually replacing</h3>
-    <p><code>ILogbookPluginV2</code> is a data-access contract: create, update, delete, <code>GetEntriesAsync(skip, take)</code>, fetch by id, worked summaries, ADIF import and export. Browsing, sorting, searching, the edit dialogs and the QSL workflow all live in Zeus Link and call <em>through</em> it. You implement roughly fourteen methods over a store and rebuild nothing the operator sees.</p>
-    <p>Three details make the job smaller than it first looks. <strong>There is no search, sort or filter parameter anywhere</strong> — the client does that itself over what it has pulled, so your store needs bulk reads but no query language. <strong><code>AdifFields</code> is a dictionary</strong> on both the new entry and the snapshot, so arbitrary ADIF fields round-trip intact. And <strong>ADIF export is in the contract regardless</strong>, so the mapper is not Wavelog-specific cost — one piece of work, two consumers.</p>
-    <p>What you cannot lean on is the built-in <em>store</em>: no handle exists on <code>IPluginContext</code>, and it lives in the closed client. Nor should you open <code>zeus-logbook.db</code> directly — undocumented schema, and the client may hold it open.</p>
+    <h3>The seam that looked obvious</h3>
+    <p>With no “QSO logged” event, <code>ILogbookPluginV2</code> is the only interface that sees every contact. It is a data-access contract — create, update, delete, paged reads, worked summaries, ADIF — so implementing it does not mean rebuilding the operator’s experience. Browsing, sorting and the edit dialogs stay in Zeus Link and call <em>through</em> it.</p>
+    <p>This design took that route first. Three things pushed it back off.</p>
+    <p><strong>The consumer cannot be verified.</strong> <code>ILogbookPlugin</code> is never called anywhere in the engine repository — Zeus Link calls it, and Zeus Link is proprietary. Whether it calls a logbook plugin at all, when, whether a fallback exists, what happens on uninstall with entries in it: none of it is knowable from source, and all of it was load-bearing. <strong>Uninstall becomes the operator’s problem</strong> once their contacts live in this plugin’s database. And <strong>it rebuilds what already works</strong> — the native logbook’s browsing, ADIF and QSL paths are correct today.</p>
 
-    <h3>Why the network stays downstream</h3>
-    <p>The obvious implementation — <code>CreateAsync</code> posts to Wavelog and returns — is wrong, and it fails at exactly the worst moment. Wavelog runs in Docker on the multihost behind Caddy. If that box is rebooting mid-contest, logging a contact must still work.</p>
-    <p>So the network is strictly downstream of the operator. The call returns as soon as the QSO is durable locally.</p>
+    <h3>The file is already the right shape</h3>
+    <p>The native plugin — <code>org.openhpsdr.logbook</code> — stores the published contract record, <code>LogbookEntrySnapshot</code>, in a collection called <code>entries</code> inside <code>zeus-logbook.db</code>, with LiteDB’s default mapper. All three facts were read out of its GPL assembly, not guessed. There is nothing to migrate and no second copy to keep honest.</p>
+    <p>So the plugin opens that file as a second handle and synchronises it. It declares <code>IZeusPlugin</code> and <code>IBackendPlugin</code> — and deliberately <em>not</em> <code>ILogbookPluginV2</code>.</p>
   </div>
 
   <figure>
     <div class="figscroll">
-    <svg viewBox="0 0 960 350" role="img" aria-label="The write path: logging a QSO stores it locally, enqueues it to an outbox, and returns immediately; a background pump drains the outbox to Wavelog across the network, retrying with backoff.">
+    <svg viewBox="0 0 960 450" role="img" aria-label="The synchroniser attaches as a second handle to zeus-logbook.db. The operator logs a QSO through Zeus's own logbook plugin into the entries collection. The synchroniser scans that collection every thirty seconds, keeps its own bookkeeping in a separate wavelog_sync collection, and enqueues work to an outbox that a background pump delivers to Wavelog across the network.">
       <defs>
-        <marker id="w-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah" points="0,1 10,5 0,9"/></marker>
-        <marker id="w-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-a" points="0,1 10,5 0,9"/></marker>
-        <marker id="w-wait" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-w" points="0,1 10,5 0,9"/></marker>
+        <marker id="s-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-a" points="0,1 10,5 0,9"/></marker>
+        <marker id="s-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah" points="0,1 10,5 0,9"/></marker>
+        <marker id="s-w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-w" points="0,1 10,5 0,9"/></marker>
       </defs>
 
-      <rect class="nbox" x="24" y="66" width="150" height="60" rx="2"/>
-      <text class="nlbl" x="99" y="92" text-anchor="middle">operator</text>
-      <text class="nsub" x="99" y="110" text-anchor="middle">logs a QSO</text>
+      <!-- the operator's path: entirely theirs -->
+      <rect class="nbox" x="24" y="60" width="150" height="56" rx="2"/>
+      <text class="nlbl" x="99" y="84" text-anchor="middle">operator</text>
+      <text class="nsub" x="99" y="102" text-anchor="middle">logs a QSO</text>
 
-      <rect class="nbox-a" x="230" y="66" width="160" height="60" rx="2"/>
-      <text class="nlbl" x="310" y="92" text-anchor="middle">CreateAsync</text>
-      <text class="nsub" x="310" y="110" text-anchor="middle">ILogbookPluginV2</text>
+      <rect class="nbox" x="214" y="60" width="196" height="56" rx="2"/>
+      <text class="nlbl" x="312" y="84" text-anchor="middle">native logbook plugin</text>
+      <text class="nsub" x="312" y="102" text-anchor="middle">org.openhpsdr.logbook</text>
 
-      <rect class="nbox" x="446" y="66" width="140" height="60" rx="2"/>
-      <text class="nlbl" x="516" y="92" text-anchor="middle">LogStore</text>
-      <text class="nsub" x="516" y="110" text-anchor="middle">durable, local</text>
+      <line class="ln" x1="176" y1="88" x2="208" y2="88" marker-end="url(#s-n)"/>
+      <line class="ln" x1="412" y1="88" x2="444" y2="88" marker-end="url(#s-n)"/>
 
-      <rect class="nbox-w" x="642" y="66" width="140" height="60" rx="2"/>
-      <text class="nlbl" x="712" y="92" text-anchor="middle">Outbox</text>
-      <text class="nsub" x="712" y="110" text-anchor="middle">pending</text>
+      <!-- the shared file -->
+      <rect class="nframe" x="450" y="28" width="290" height="186" rx="3"/>
+      <text class="nsub" x="595" y="50" text-anchor="middle">zeus-logbook.db</text>
 
-      <line class="ln-a" x1="176" y1="96" x2="226" y2="96" marker-end="url(#w-acc)"/>
-      <line class="ln-a" x1="392" y1="96" x2="442" y2="96" marker-end="url(#w-acc)"/>
-      <line class="ln-a" x1="588" y1="96" x2="638" y2="96" marker-end="url(#w-acc)"/>
+      <rect class="nbox" x="470" y="66" width="250" height="56" rx="2"/>
+      <text class="nlbl" x="595" y="90" text-anchor="middle">entries</text>
+      <text class="nsub" x="595" y="108" text-anchor="middle">LogbookEntrySnapshot — theirs</text>
 
-      <polyline class="ln-a" points="310,64 310,30 99,30 99,62" marker-end="url(#w-acc)"/>
-      <text class="nsub na" x="204" y="22" text-anchor="middle">snapshot returns here — immediately, no network</text>
+      <rect class="nbox-a" x="470" y="140" width="250" height="56" rx="2"/>
+      <text class="nlbl" x="595" y="164" text-anchor="middle">wavelog_sync</text>
+      <text class="nsub" x="595" y="182" text-anchor="middle">source · key · uploaded — ours</text>
 
-      <rect class="nframe" x="420" y="196" width="516" height="132" rx="3"/>
-      <text class="nsub nd" x="436" y="218">NETWORK — MAY BE DOWN</text>
+      <text class="nsub na" x="756" y="84">Connection=shared</text>
+      <text class="nsub" x="756" y="102">both handles, or they</text>
+      <text class="nsub" x="756" y="118">diverge with no error</text>
 
-      <rect class="nbox-w" x="446" y="234" width="150" height="60" rx="2"/>
-      <text class="nlbl" x="521" y="260" text-anchor="middle">pump</text>
-      <text class="nsub" x="521" y="278" text-anchor="middle">background</text>
+      <!-- us -->
+      <line class="ln-a" x1="530" y1="216" x2="530" y2="246" marker-end="url(#s-a)"/>
+      <text class="nsub na" x="522" y="238" text-anchor="end">scan · 30s</text>
+      <line class="ln-a" x1="654" y1="246" x2="654" y2="216" marker-end="url(#s-a)"/>
+      <text class="nsub na" x="662" y="238">insert · confirm</text>
 
-      <rect class="nbox" x="756" y="234" width="160" height="60" rx="2"/>
-      <text class="nlbl" x="836" y="260" text-anchor="middle">Wavelog</text>
-      <text class="nsub" x="836" y="278" text-anchor="middle">multihost · Caddy</text>
+      <rect class="nbox-a" x="450" y="250" width="290" height="62" rx="2"/>
+      <text class="nlbl" x="595" y="276" text-anchor="middle">synchroniser</text>
+      <text class="nsub" x="595" y="296" text-anchor="middle">second handle · not the logbook</text>
 
-      <polyline class="ln-w" points="712,128 712,164 521,164 521,230" marker-end="url(#w-wait)"/>
-      <text class="nsub nw" x="600" y="156" text-anchor="middle">lease</text>
-      <line class="ln-w" x1="600" y1="264" x2="752" y2="264" marker-end="url(#w-wait)"/>
-      <text class="nsub nw" x="676" y="256" text-anchor="middle">POST adif</text>
+      <!-- outbox and the network -->
+      <polyline class="ln-w" points="448,278 300,278 300,326 155,326 155,350" marker-end="url(#s-w)"/>
+      <text class="nsub nw" x="374" y="270" text-anchor="middle">enqueue</text>
 
-      <path class="ln-w" d="M470 296 C 450 322, 570 322, 552 298" marker-end="url(#w-wait)"/>
-      <text class="nsub nw" x="511" y="338" text-anchor="middle">retry with backoff</text>
+      <rect class="nbox-w" x="60" y="354" width="190" height="56" rx="2"/>
+      <text class="nlbl" x="155" y="378" text-anchor="middle">outbox</text>
+      <text class="nsub" x="155" y="396" text-anchor="middle">pending · dead-letter</text>
+
+      <rect class="nframe" x="376" y="330" width="566" height="104" rx="3"/>
+      <text class="nsub nd" x="392" y="350">NETWORK — MAY BE DOWN</text>
+
+      <rect class="nbox-w" x="400" y="358" width="160" height="56" rx="2"/>
+      <text class="nlbl" x="480" y="382" text-anchor="middle">pump</text>
+      <text class="nsub" x="480" y="400" text-anchor="middle">background · backoff</text>
+
+      <rect class="nbox" x="752" y="358" width="180" height="56" rx="2"/>
+      <text class="nlbl" x="842" y="382" text-anchor="middle">Wavelog</text>
+      <text class="nsub" x="842" y="400" text-anchor="middle">multihost · Caddy</text>
+
+      <line class="ln-w" x1="254" y1="386" x2="396" y2="386" marker-end="url(#s-w)"/>
+      <text class="nsub nw" x="325" y="378" text-anchor="middle">lease</text>
+      <line class="ln-w" x1="564" y1="386" x2="748" y2="386" marker-end="url(#s-w)"/>
+      <text class="nsub nw" x="656" y="378" text-anchor="middle">POST adif</text>
     </svg>
     </div>
-    <figcaption><b>Everything above the dashed box happens without a network.</b> The operator's call touches three local components and returns. Only the pump crosses the boundary, and it is allowed to fail there for as long as it takes — the QSO is already safe. This is the design decision the whole plugin exists to protect, and §5 turns it into two tests.</figcaption>
+    <figcaption><b>The top row is entirely the operator’s, and nothing in it belongs to this plugin.</b> Under the earlier design the middle box was <code>CreateAsync</code> and every contact passed through plugin code on its way to disk; here the contact is already stored before the synchroniser knows it exists. “Wavelog can never fail a QSO” stopped being a rule to hold and became a fact about the wiring. The two collections in one file are the whole trick — and the reason both handles must open shared.</figcaption>
   </figure>
 
-  <div class="note"><b>One alternative, explicitly rejected.</b> Knowing the seam is storage, Wavelog could <em>be</em> the store — <code>GetEntriesAsync</code> querying it on every browse. Cloudlog-family APIs are write-oriented, that method sits on the browsing path, and it would put the network between the operator and their own log: the exact failure this section exists to prevent.</div>
+  <div class="note"><b>Polling is not the compromise it looks like.</b> With no event, new work is found by absence: an entry with no row in <code>wavelog_sync</code> has not been dealt with. That is a scan every thirty seconds — the only mechanism available, and the better one anyway. A station with years of contacts logged before this plugin existed has its whole backlog picked up on the first scan, instead of the plugin quietly starting from now.</div>
+
+  <div class="note"><b>Our fields never join their document.</b> Where a QSO came from and whether it has been uploaded live in a separate collection, not on the QSO. Adding them to the stored record would leak them into ADIF exports through <code>AdifFields</code>, and a round-trip through the reference’s own code could drop them. The QSO stays theirs; the sync state stays ours.</div>
+
 </section>
 
 <section>
@@ -281,34 +304,34 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
     <svg viewBox="0 0 940 320" role="img" aria-label="Four layers — domain, ports, adapters, plugin — with the test infrastructure each one requires, from none for the pure domain to fakes for the plugin layer.">
       <rect class="nbox-a" x="30" y="30" width="600" height="66" rx="2"/>
       <text class="nlbl" x="46" y="56">Domain — pure, no I/O</text>
-      <text class="nsub" x="46" y="78">AdifMapper · WavelogRequest · RetryPolicy</text>
+      <text class="nsub" x="46" y="78">AdifMapper · AdifParser · RetryPolicy · SyncState</text>
       <text class="nsub na" x="660" y="62">nothing to stand up</text>
       <text class="nsub na" x="660" y="78">most of the tests live here</text>
 
       <rect class="nbox" x="30" y="110" width="600" height="60" rx="2"/>
       <text class="nlbl" x="46" y="136">Ports — interfaces</text>
-      <text class="nsub" x="46" y="156">IWavelogTransport · IOutbox · ILogStore · IClock</text>
+      <text class="nsub" x="46" y="156">IWavelogTransport · IOutbox · ICursorStore · IClock</text>
       <text class="nsub" x="660" y="146">the seam</text>
 
       <rect class="nbox" x="30" y="184" width="600" height="66" rx="2"/>
       <text class="nlbl" x="46" y="210">Adapters</text>
-      <text class="nsub" x="46" y="232">HttpWavelogTransport · LiteDbOutbox · LiteDbLogStore · SystemClock</text>
+      <text class="nsub" x="46" y="232">HttpWavelogTransport · LiteDbOutbox · ZeusLogbookDb · SystemClock</text>
       <text class="nsub" x="660" y="216">stub HttpMessageHandler</text>
-      <text class="nsub" x="660" y="232">temp-file database</text>
+      <text class="nsub" x="660" y="232">temp-file db · a second handle</text>
 
       <rect class="nbox" x="30" y="264" width="600" height="46" rx="2"/>
-      <text class="nlbl" x="46" y="292">Plugin — WavelogLogbookPlugin</text>
+      <text class="nlbl" x="46" y="292">Plugin — WavelogSyncPlugin : IZeusPlugin, IBackendPlugin</text>
       <text class="nsub" x="660" y="292">fakes for every port</text>
 
       <line class="ln" x1="644" y1="20" x2="644" y2="316" stroke-dasharray="4 4"/>
       <text class="nsub" x="660" y="20">TEST COST</text>
     </svg>
     </div>
-    <figcaption><b>The layering is chosen for testability, not tidiness.</b> ADIF formatting and the retry decision are the two places a subtle bug does real damage — a malformed record silently rejected, or a misconfiguration retried forever — and both are pure functions that need no database, no network and no radio. The default test run touches none of the three.</figcaption>
+    <figcaption><b>The layering is chosen for testability, not tidiness.</b> ADIF formatting and the retry decision are the two places a subtle bug does real damage — a malformed record silently rejected, or a misconfiguration retried forever — and both are pure functions that need no database, no network and no radio. Note what the plugin line no longer says: dropping <code>ILogbookPluginV2</code> removed fourteen methods and the only interface whose caller could not be verified.</figcaption>
   </figure>
 
   <div class="prose">
-    <p>Dependencies stay deliberately few. The host's load context resolves <code>Zeus.Plugins.Contracts</code>, <code>Microsoft.*</code>, <code>System.*</code> and <code>netstandard</code> from the default context, but <em>everything else ships in the plugin's own directory</em> — so <code>System.Net.Http</code> is preferred over any third-party client.</p>
+    <p>Dependencies stay deliberately few. The host's load context resolves <code>Zeus.Plugins.Contracts</code>, <code>Microsoft.*</code>, <code>System.*</code> and <code>netstandard</code> from the default context, but <em>everything else ships in the plugin's own directory</em> — so <code>System.Net.Http</code> is preferred over any third-party client. LiteDB is the one addition, and it is not a choice: it is the format the file is already in.</p>
   </div>
 </section>
 
@@ -316,13 +339,17 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
   <div class="sechead"><span class="secnum">§4</span><h2>Manifest and endpoints</h2></div>
 <pre>{
   <b>"id"</b>: "on8st.wavelog",
+  <b>"name"</b>: "Wavelog Synchroniser",
   <b>"sdk"</b>:        { "abi": 1, "minVersion": "1.4.0" },
-  <b>"entrypoint"</b>: { "assembly": "Zeus.Plugin.Wavelog.dll" },
+  <b>"entrypoint"</b>: { "assembly": "Zeus.Plugin.Wavelog.dll",
+                  "type": "Zeus.Plugin.Wavelog.WavelogSyncPlugin" },
   <b>"capabilities"</b>: ["NetworkAccess"],
-  <b>"ui"</b>: { "panels": [ { "id": "wavelog", "title": "Wavelog",
-                          "slot": "settings", "category": "plugins" } ] }
+  <b>"ui"</b>: { "modules": ["ui/wavelog.es.js"],
+          "panels": [ { "id": "wavelog.config", "title": "Wavelog Sync",
+                        "slot": "workspace.tools", "category": "tools" } ] }
 }</pre>
   <div class="prose">
+    <p><strong>The file is <code>plugin.json</code>.</strong> Prose suggested <code>manifest.json</code>; every GPL sample plugin the registry distributes ships <code>plugin.json</code>, and that is the name the host reads. A plugin with the wrong filename is simply never discovered, and nothing in the C# would say so — which is why a packaging test asserts it, along with the panel id matching what the UI module registers.</p>
     <p><code>NetworkAccess</code> is declared honestly even though it is <em>not enforced</em> at runtime — nothing stops loaded .NET code opening a socket. The manifest is what the operator reads, not a sandbox.</p>
     <p><strong>The API key never appears in the manifest.</strong> It lives in <code>ctx.Settings</code>, which is plugin-scoped and host-persisted, and the config <code>GET</code> never returns it.</p>
   </div>
@@ -333,15 +360,19 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
       <tbody>
         <tr><td class="m">GET  …/config</td><td>URL, profiles pulled, profile pushed to — <strong>key redacted</strong></td></tr>
         <tr><td class="m">GET  …/profiles</td><td><code>station_info</code> passthrough — what this key can reach</td></tr>
-        <tr><td class="m">PUT  …/config</td><td>set them</td></tr>
+        <tr><td class="m">POST …/config</td><td>set them (<code>PUT</code> also accepted)</td></tr>
         <tr><td class="m">POST …/test</td><td>one round-trip against the instance</td></tr>
-        <tr><td class="m">GET  …/status</td><td>pending and failed counts, last error</td></tr>
+        <tr><td class="m">GET  …/status</td><td>logbook size, pending and failed counts, cursor, last error</td></tr>
         <tr><td class="m">POST …/retry</td><td>re-queue the dead-letter items</td></tr>
         <tr><td class="m">POST …/resync</td><td>full reconcile; <code>{"dryRun": true}</code> reports without writing</td></tr>
       </tbody>
     </table>
   </div>
-  <div class="prose"><p>All prefixed <code>/api/plugins/on8st.wavelog/</code> — <code>IBackendPlugin</code> hands you a route builder already scoped to the plugin. This is the whole product; the UI panel is a form over these, and comes last (§7).</p></div>
+  <div class="prose">
+    <p>All prefixed <code>/api/plugins/on8st.wavelog/</code> — <code>IBackendPlugin</code> hands you a route builder already scoped to the plugin. This is the whole product; the panel (§11) is a form over exactly these, which is why it could be written without touching the C#.</p>
+    <p><code>POST</code> as well as <code>PUT</code> on <code>config</code> is not tidiness: the sample panels only ever call <code>GET</code> and <code>POST</code> through <code>api.callBackend</code>, so <code>PUT</code> alone would leave the panel unable to save.</p>
+    <p><strong>Configuration is re-read, not cached authoritatively.</strong> Zeus owns the settings store and can rewrite a plugin's whole collection without telling it — that is how profile snapshot and restore work. <code>PluginSettingsChanged</code> exists but sits on the host's own store and is not on <code>IPluginContext</code>, so a plugin cannot subscribe. With no push available, a cached copy would leave the plugin talking to the old instance with the old key until restart. A 30-second TTL closes it.</p>
+  </div>
 </section>
 
 <section>
@@ -350,24 +381,30 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 
   <ol class="steps">
     <li><b>AdifMapperTests — pure, table-driven</b>
-      Frequency to MHz at six decimals · band derivation · mode and submode split · UTC handling · RST defaults · <strong>optional fields omitted rather than emitted empty</strong> · <code>&lt;eor&gt;</code> · awkward characters in a comment · callsign casing.</li>
+      Frequency to MHz at six decimals · band derivation · mode and submode split · UTC handling · RST defaults · <strong>optional fields omitted rather than emitted empty</strong> · <code>&lt;eor&gt;</code> · awkward characters in a comment · callsign casing · <strong>lengths in UTF-8 bytes, not characters</strong>.</li>
+    <li><b>AdifParserTests — the reading half</b>
+      Length-prefixed fields · a wrong length is a format error, not a silent truncation · trailing material without <code>&lt;EOR&gt;</code> is dropped.</li>
     <li><b>OutboxTests — the ones that catch real failures</b>
       Enqueue survives a restart · a lease is exclusive · ack removes · nack reschedules with backoff · <strong>an item in flight when the process dies is redelivered, not lost</strong> · poison items dead-letter after N attempts.</li>
     <li><b>RetryPolicyTests — the distinction that matters</b>
-      <code>401</code>/<code>403</code> dead-letters immediately; <code>5xx</code> and timeouts back off; <code>400</code> dead-letters with the response body kept.</li>
-    <li><b>WavelogClientTests — stub HttpMessageHandler</b>
+      <code>401</code>/<code>403</code> dead-letters immediately; <code>5xx</code> and timeouts back off; <code>400</code> dead-letters with the response body kept; a <code>200</code> carrying HTML is a proxy error page, not a success.</li>
+    <li><b>TransportTests — stub HttpMessageHandler</b>
       Correct URL and body · a non-JSON response is a failure, not a success · status surfaced.</li>
     <li><b>PumpTests — fake clock, fake transport</b>
       Drains in order · backs off while the instance is down · recovers and catches up · never loses an item.</li>
-    <li><b>LogbookFacadeTests — these two encode the design</b>
-      <code>CreateAsync</code> returns <strong>without touching the transport</strong>. <code>CreateAsync</code> still succeeds when the transport throws.</li>
+    <li><b>ZeusLogbookDbTests — attaching to somebody else’s database</b>
+      A QSO written by a <em>separate handle</em> is visible without reopening · timestamps come back UTC, not local · an entry with no sync row is unseen, and stops being unseen once tracked · <strong>our fields never appear in their document</strong> · a confirmation changes the confirmation and nothing else · uninstalling would leave the log intact.</li>
+    <li><b>NeverInTheWayTests — the property the reframe is worth having</b>
+      The scan never touches the network · a QSO logged while Wavelog is down is still the operator’s QSO · an unconfigured plugin queues nothing <strong>and forgets nothing</strong>, so the backlog goes up the day a key is pasted in · the same QSO noticed twice is queued once · a backlog logged before the plugin existed goes up on the first scan.</li>
     <li><b>SyncTests — the pull half, and the trap</b>
-      An imported QSO <strong>does not enter the outbox</strong> · the cursor advances to the returned <code>lastfetchedid</code> and never regresses · a confirmation sweep updates QSL fields without duplicating · full resync is idempotent, so a second run inserts nothing · full resync never deletes · two resyncs cannot run at once · a QSO in an unselected profile is not imported, and status says which profiles are synced.</li>
-    <li><b>ConfigEndpointTests</b>
-      <code>GET</code> never echoes the key · <code>PUT</code> validates the URL.</li>
+      An imported QSO <strong>does not enter the outbox</strong>, and is not queued by the next scan either · a pulled QSO shows up in <em>Zeus’s own</em> logbook · the cursor advances to the returned <code>lastfetchedid</code> and never regresses · a confirmation sweep updates QSL fields without duplicating · a dry run sees a gap in a logbook it has never scanned · full resync is idempotent and never deletes · a QSO in an unselected profile is not imported.</li>
+    <li><b>PackagingTests — what actually ships</b>
+      The manifest is <code>plugin.json</code> · the entrypoint type exists · every declared UI module is in the output · <code>LiteDB.dll</code> and the deps file are present · <code>Zeus.Plugins.Contracts.dll</code> is <strong>not</strong>.</li>
   </ol>
 
-  <div class="note"><b>Integration tests come last and stay opt-in.</b> Real LiteDB and a real <code>wavelog.on8st.be</code> belong in a separate project, so the default run needs no network, no database and no radio.</div>
+  <div class="note"><b>The seventh group is the one the reframe added, and it needs a second Zeus.</b> <code>NativeLogbook</code> in the test project plays Zeus’s own logbook plugin: its own <code>LiteDatabase</code>, opened the way the reference opens it, writing contract records into <code>zeus-logbook.db</code>. Every test starts from a log this plugin did not create — which is the only way the shared-mode claim can be held at all, because a fake would satisfy it for free and prove nothing.</div>
+
+  <div class="note"><b>Integration tests come last and stay opt-in.</b> Everything above runs against <code>tools/FakeWavelog</code>, a local stand-in implementing the endpoints and semantics read out of Wavelog’s own source. A real <code>wavelog.on8st.be</code> belongs in a separate project, so the default run — 151 tests — needs no network, no live server and no radio.</div>
 </section>
 
 <section>
@@ -474,7 +511,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
     </ul>
   </div>
 
-  <div class="risk"><b>The trap: imported QSOs must bypass the outbox.</b> Import is a different write path from <code>CreateAsync</code>. Without that, a full resync enqueues your entire log for push-back — thousands of no-op inserts hammering Wavelog to achieve nothing, while the outbox churns and status reports a backlog that never means anything. It is the single most important test in §5.</div>
+  <div class="risk"><b>The trap: imported QSOs must never be pushed back.</b> They land in the same collection everything else lands in, so nothing about their shape distinguishes them — only the sync row this plugin writes beside them, marked <code>wavelog</code>. Without that mark the next scan sees a contact it has not queued, queues it, and a full resync enqueues the entire imported log for push-back: thousands of no-op inserts hammering Wavelog to achieve nothing, while the outbox churns and status reports a backlog that never means anything. It has to hold at two moments, not one — immediately, and again on the next scan thirty seconds later. Both are tested, and it is the single most important test in §5.</div>
 </section>
 
 <section>
@@ -513,13 +550,13 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 
 <section>
   <div class="sechead"><span class="secnum">§9</span><h2>Phases</h2></div>
-  <div class="prose"><h3>Phase 1 — log and radio</h3><p>The product. Everything an operator needs, configured over HTTP.</p></div>
+  <div class="prose"><h3>Phase 1 — synchronise</h3><p>The product. Everything an operator needs.</p></div>
 
   <div class="tblscroll">
     <table>
       <thead><tr><th class="m">Milestone</th><th>Contains</th></tr></thead>
       <tbody>
-        <tr><td class="m">1a — store</td><td><code>ILogbookPluginV2</code> over a local store · ADIF mapper · export and import</td></tr>
+        <tr><td class="m">1a — attach</td><td>second handle on <code>zeus-logbook.db</code> · sync collection · scan for unseen</td></tr>
         <tr><td class="m">1b — push</td><td>outbox · pump · retry policy · <code>POST /api/qso</code></td></tr>
         <tr><td class="m">1c — pull</td><td>incremental <code>fetchfromid</code> loop · confirmation sweep · profile selection</td></tr>
         <tr><td class="m">1d — repair</td><td>full resync, dry run first</td></tr>
@@ -527,21 +564,19 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
       </tbody>
     </table>
   </div>
-  <div class="prose"><p><strong>1a is shippable on its own</strong> — a working logbook that syncs nothing. Each milestone after it adds one loop, and each is independently revertible by a config toggle.</p></div>
+  <div class="prose"><p>Each milestone adds one loop, and each is independently revertible by a config toggle.</p></div>
 
   <div class="prose">
     <h3>The gate — phase 1 must be proven before phase 2 starts</h3>
-    <p>Phase 1 rests on assumptions the engine repository <strong>cannot verify</strong> (§12): whether Zeus Link calls <code>ILogbookPluginV2</code> at all, when, whether a fallback to the built-in exists, and what happens on uninstall. None of it is knowable from source — it has to be established by running it. And phase 2 adds network to a UI path, so doing that on top of an unproven store compounds two risks that are far easier to diagnose apart.</p>
+    <p>The reframe removed the largest unknown: nothing now depends on what Zeus Link does with a logbook plugin. What remains has to be established by running it. And phase 2 adds network to a UI path, so doing that on top of an unproven attachment compounds two risks that are far easier to diagnose apart.</p>
     <p>Phase 2 does not start until all of these hold:</p>
     <ul>
-      <li><strong>Zeus Link actually uses the plugin as its logbook</strong> — the biggest unknown, unanswerable any other way</li>
-      <li><strong>Browsing, sorting, searching, editing and deleting all work</strong> through it, client UI unchanged</li>
-      <li><strong>Performance is acceptable at real log size</strong> — <code>GetEntriesAsync</code> is on the browsing path and the client appears to filter client-side, so it may pull more than a page</li>
+      <li><strong>the plugin actually attaches</strong> — <code>/status</code> reports the same number of QSOs the logbook view shows. Zero against a full log means it has opened the wrong file, or one side is not in shared mode</li>
       <li>a QSO logged in Zeus <strong>appears in Wavelog</strong> within the poll interval</li>
-      <li>a QSO logged <strong>elsewhere</strong> — web UI, WSJT-X, another logger — appears in Zeus</li>
-      <li>a <strong>LoTW confirmation</strong> reaches Zeus after the daily sweep</li>
+      <li>a QSO logged <strong>elsewhere</strong> — web UI, WSJT-X, another logger — appears in <strong>Zeus’s own logbook view</strong>, browsable and editable like any other</li>
+      <li>a <strong>LoTW confirmation</strong> reaches Zeus after the sweep, and changes nothing else about the contact</li>
       <li><strong>full resync dry-run reports zero drift</strong> after a week of normal use</li>
-      <li><strong>uninstall and reinstall leaves the log intact</strong> and exportable</li>
+      <li><strong>uninstalling the plugin leaves the log complete</strong> and exportable</li>
     </ul>
     <p>Run it on a <strong>scratch profile first</strong>, then the real log, and let it soak under ordinary operating before calling it proven. The dry-run resync is the cheap weekly check: if it keeps reporting nothing to do, the loops are working.</p>
 
@@ -549,36 +584,53 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
     <p><code>logbook_check_callsign</code> and the grid checks. Separated because it has a <strong>different risk profile</strong> — the only part that puts the network in front of the operator, so it needs a cache, a timeout, and a local fallback exercised by tests rather than assumed.</p>
 
     <h3>Phase 3 — the panel</h3>
-    <p>Blocked on external information, not on us — the UI contract belongs to Zeus Link and is not in the engine repository (§11). Phase 3 starts when upstream answers or a registry plugin publishes its source. Until then phases 1 and 2 are fully usable over the endpoints in §4.</p>
-    <p><strong>Sequenced this way, the only phase that can stall is the one that adds no capability.</strong></p>
+    <p>Done, and no longer last. It was deferred while the UI contract looked unknowable; it turned out to be readable from the GPL sample plugins the registry distributes (§11).</p>
   </div>
 </section>
 
 <section>
-  <div class="sechead"><span class="secnum">§10</span><h2>Open before the first test</h2></div>
+  <div class="sechead"><span class="secnum">§10</span><h2>Settled during phase 1</h2></div>
   <div class="prose">
     <h3>Per-entry upload state</h3>
-    <p>The contract already carries <code>UpdateQrzUploadStatusAsync</code>, so there is precedent for per-QSO upload status. Mirror it: store <code>wavelogUploadedAt</code> and a failure reason, so <code>status</code> can report honestly and <code>retry</code> has something to work from.</p>
+    <p>Open at the start; settled by the reframe. It cannot live on the QSO, because the QSO is not ours — so <code>wavelog_sync</code> carries the source, the dedup key, the upload time and the last error, keyed by entry id. <code>status</code> reports from it and <code>retry</code> works from it.</p>
+
+    <h3>Where the plugin’s own files live</h3>
+    <p>The outbox and cursor go in a <code>wavelog-plugin</code> directory <em>beside</em> the logbook in the host data directory, not inside the plugin root — so an uninstall or an upgrade does not take the queue with it.</p>
+
+    <h3>A mapper per database, not <code>BsonMapper.Global</code></h3>
+    <p>The global one is process-wide mutable state with a cache that is not safe to populate from several threads at once; two databases opened concurrently can hand back a half-built entity mapping, which surfaces much later as <em>“member not found”</em> on a field that plainly exists. It showed up as a flaky test, which is the only reason it was found. A fresh mapper has identical defaults, so the stored document is byte-for-byte what the reference writes — it just cannot be raced, or reconfigured by anything else sharing the load context.</p>
+
+    <h3>Dates</h3>
+    <p>LiteDB stores UTC and hands back local. For a logbook that is not cosmetic: the dedup key is the timestamp to the minute, so an unconverted value makes Wavelog treat the same contact as a new one. Normalised on every read and write, with a regression test.</p>
   </div>
 </section>
 
 <section>
-  <div class="sechead"><span class="secnum">§11</span><h2>The panel comes last, and why</h2></div>
+  <div class="sechead"><span class="secnum">§11</span><h2>The panel, and how the contract was learned</h2></div>
   <div class="prose">
-    <p><code>ui.modules</code> and panel slots are consumed by Zeus Link, which is proprietary and not in the engine repository. Its shipped bundle carries an explicit <em>“may not be … decompiled, disassembled, or reverse engineered”</em> clause, so it is not a legitimate source for reconstructing the contract.</p>
-    <p>The layout does suggest one thing legitimately: the bundle ships <code>wwwroot/zeus-sdk/react.js</code> and <code>react-jsx-runtime.js</code> as separate importable modules — what you do when third-party modules are meant to import your framework rather than bundle their own.</p>
-    <p>To learn it properly: ask upstream, where issues are enabled and the one prior issue was handled, or find a registry plugin that publishes its source. Until then the plugin is <strong>fully usable without a panel</strong>, configured over the endpoints in §4 — which is also why deferring it costs nothing.</p>
+    <p><code>ui.modules</code> and panel slots are consumed by Zeus Link, which is proprietary. Its shipped bundle carries an explicit <em>“may not be … decompiled, disassembled, or reverse engineered”</em> clause, so it is not a legitimate source.</p>
+    <p>The registry is. <code>downloads.zeussdr.com/plugins/registry.json</code> publishes sample plugins under <strong>GPL-2.0-or-later</strong>, with source — plugins that exist to be read. That is the intended documentation, not a workaround, and reading it answered everything:</p>
+    <ul>
+      <li>an ES module whose <strong>default export is <code>register(api)</code></strong></li>
+      <li><code>api.registerPanel({ id, component })</code> — and the id must match the manifest’s panel id, or the panel silently never appears</li>
+      <li><code>api.callBackend(method, path, body)</code> returns a <code>fetch</code> Response, already prefixed with the plugin’s route</li>
+      <li>React arrives from the host as a <strong>bare specifier</strong> — which is why the bundle ships <code>zeus-sdk/react.js</code> as a separate importable module</li>
+      <li>real tool panels use <code>slot: "workspace.tools"</code> with <code>category: "tools"</code>. <code>"settings"</code> was invented earlier in this design and appears nowhere</li>
+    </ul>
+    <p>The panel is written with <code>React.createElement</code> rather than JSX, so the plugin needs no build step: no npm, no bundler, no lockfile. A packaging test asserts the registered id matches the manifest, because that failure mode is silent.</p>
   </div>
 </section>
 
 <section>
   <div class="sechead"><span class="secnum">§12</span><h2>Risks worth stating up front</h2></div>
-  <div class="risk"><b>You are replacing the store, not the logbook UI.</b> The operator's experience is unaffected; what moves is the data — your QSOs live in this plugin's storage. Before running it against a real log, confirm ADIF export works and that uninstalling leaves the data recoverable — <strong>write the export test before the import path</strong>, not after.</div>
-  <div class="risk"><b>The engine cannot verify the consumer.</b> <code>ILogbookPlugin</code> is never called anywhere in the engine repository; Zeus Link calls it. When it is called, whether a fallback to the built-in exists, what happens if the plugin is uninstalled with entries in it — none of that is knowable from the GPL source. Establish it empirically on a scratch profile before trusting it with a real log.</div>
+  <div class="risk"><b>You are writing into a collection another plugin owns.</b> That is the deal the reframe makes, and it is a real exposure: if a future Zeus renames a field, changes the mapper or moves the file, this attaches to the wrong thing rather than failing loudly. The names and the document shape are asserted in tests, so a change is caught the moment the reference is re-read — <strong>but it has to be re-read</strong>. Treat a Zeus upgrade as a reason to run the suite, not just the plugin.</div>
+  <div class="risk"><b>Both sides must open shared.</b> If a future Zeus switches to <code>Direct</code>, the two handles stop seeing each other with no error at all — the plugin reports a healthy empty queue while nothing syncs. <code>/status</code> reporting the logbook count is the cheap tell.</div>
+  <div class="risk"><b>The fake encodes our reading of Wavelog, not Wavelog.</b> 151 passing tests prove the plugin does what this document says. They cannot prove this document read the API right. Only a run against a real instance does that, and it is a gate item, not a unit test.</div>
+  <div class="risk"><b>Confirmations are the one place we edit somebody else’s record.</b> Deliberately the narrowest edit in the plugin — QSL and LoTW fields only, matched on the dedup key. Worth re-reading if it ever grows.</div>
 </section>
 
 <footer>
-  <p>Design only — nothing is implemented. Derived from reading station-engine at v2.0.9 (<code>db764e1</code>); the Wavelog API shape is unverified. Laid out per the inverted SSOT convention: this rendering sits at the folder root, and the governing markdown is <code>source/design.md</code>. Where the two disagree, the markdown is the source of truth — this page is a copy, currently maintained by hand.</p>
+  <p>Built and tested against a local stand-in; never run inside Zeus. Derived from reading station-engine at v2.0.9 (<code>db764e1</code>), the Wavelog source at <code>af32561</code>, and the GPL sample plugins the registry distributes. Laid out per the inverted SSOT convention: this rendering sits at the folder root, and the governing markdown is <code>source/design.md</code>. Where the two disagree, the markdown is the source of truth — this page is a copy, currently maintained by hand.</p>
 </footer>
 
 </div>
