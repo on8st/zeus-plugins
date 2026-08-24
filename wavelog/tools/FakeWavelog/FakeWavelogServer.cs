@@ -163,6 +163,7 @@ public sealed class FakeWavelogServer : IDisposable
 
         var records = MiniAdif.Parse(adif);
         var added = 0;
+        var duplicates = new List<string>();
         lock (_gate)
         {
             foreach (var r in records)
@@ -177,11 +178,29 @@ public sealed class FakeWavelogServer : IDisposable
                 var duplicate = _rows.Any(x =>
                     x.Call == call && x.TimeKey == timeKey &&
                     x.Band == band && x.Mode == mode && x.StationId == stationId);
-                if (duplicate) continue;
+                if (duplicate)
+                {
+                    duplicates.Add(
+                        $"Date/Time: {timeKey} Callsign: {call} Band: {band} Duplicate for ON8ST<br>");
+                    continue;
+                }
 
                 _rows.Add(new Row(_nextId++, call, timeKey, band, mode, stationId, RecordOf(r)));
                 added++;
             }
+        }
+
+        // A real instance answers a duplicate with HTTP 400 and status "abort",
+        // not a quiet success. This used to reply "created" with a zero count,
+        // which hid the fact that the retry policy would dead-letter a QSO that
+        // is sitting safely in the operator's log.
+        if (duplicates.Count > 0)
+        {
+            var messages = string.Join(",", duplicates.Select(d => JsonSerializer.Serialize(d)));
+            Reply(ctx, 400,
+                $"{{\"status\":\"abort\",\"type\":\"adif\",\"adif_count\":{duplicates.Count}," +
+                $"\"adif_errors\":{duplicates.Count},\"messages\":[\"\",{messages}]}}");
+            return;
         }
 
         Reply(ctx, 200, $"{{\"status\":\"created\",\"adif_count\":{added}}}");

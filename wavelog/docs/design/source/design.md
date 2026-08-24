@@ -299,8 +299,12 @@ AND COL_BAND = ? AND COL_MODE = ? AND station_id = ?
 
 Callsign + time **to the minute** + band + mode + station. Consequences:
 
-- **At-least-once is safe.** A timed-out POST that did land is silently skipped
-  on retry. No client-side idempotency key is needed.
+- **At-least-once is safe — but the retry is not reported as success.** A
+  timed-out POST that did land is skipped rather than duplicated, so no
+  client-side idempotency key is needed. What comes back for that retry is
+  **HTTP 400 `status: "abort"`** with `"Duplicate for <call>"` among `messages`.
+  A retry policy that dead-letters 400s therefore marks a QSO permanently failed
+  while it sits safely in the log. See §12.
 - **Send the same `time_on` you stored.** 12:00:59 re-sent as 12:01:00 is a new
   QSO, not a duplicate.
 - **Mode must match exactly** — uppercased, compared, submode separate. A
@@ -627,6 +631,23 @@ segment; a POSTed body is never read. Every *other* endpoint reads
 `php://input`. The body form returns a 401 whose text is indistinguishable from
 a bad key, so this would have been diagnosed as the operator's problem.
 
+### A duplicate is reported as a failure
+
+The one that would have hurt most in daily use. Deduplication is what makes
+at-least-once delivery safe, and this design leaned on it to close the retry
+question. It works — a re-push creates no second contact. But the reply is
+`HTTP 400 status:"abort"`, and §5's retry policy dead-letters 400s.
+
+So the first time a POST timed out after landing — a slow link, a Caddy restart
+mid-contest — the operator would get a permanent "1 failed", and pressing
+**retry** would fail again, forever. The count would never return to zero and
+would stop meaning anything.
+
+`IsOnlyDuplicates` now reads the rejection: if every message is a duplicate, the
+QSO is where we wanted it and the outcome is success. Strictly every message — a
+real error arriving alongside a duplicate must still fail, or a genuine problem
+hides behind a benign one.
+
 ### `lastfetchedid` is a string
 
 A real instance returns `"lastfetchedid":"1"` — quoted — while `exported_qsos`
@@ -654,12 +675,13 @@ handles stop seeing each other with no error at all — the plugin reports a
 healthy empty queue while nothing syncs. `/status` reporting the logbook count is
 the cheap tell.
 
-**The fake encodes our reading of Wavelog, not Wavelog.** 158 passing tests prove
+**The fake encodes our reading of Wavelog, not Wavelog.** 163 passing tests prove
 the plugin does what this document says. They cannot prove this document read the
-API right — §12 is three demonstrations of exactly that. The live harness is now
+API right — §12 is four demonstrations of exactly that. The live harness is now
 the check that can, and the read path has passed it against a real instance. The
-**write** path has not: it has only been exercised through Wavelog's `dryrun`
-form, which validates auth and the endpoint but inserts nothing.
+**write** path has now passed it too, against a dedicated station location on a
+real instance: a contact pushed, landed, re-pushed, and deduplicated without a
+second row appearing.
 
 **Confirmations are the one place we edit somebody else's record.** Deliberately
 the narrowest edit in the plugin — QSL and LoTW fields only, matched on the dedup

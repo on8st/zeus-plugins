@@ -11,8 +11,9 @@ attaches to the same database file and moves contacts across.
 Design: [`docs/design/`](docs/design/) · Prompts: [`prompts/`](prompts/)
 
 **Status: runs inside a real station engine alongside the real Zeus Logbook
-plugin, and reads a live Wavelog. Not yet proven writing to a live Wavelog, and
-not yet run under Zeus Link.** See *Before you trust it*.
+plugin, and syncs both directions with a live Wavelog — pushed, pulled, and
+deduplicated on retry against a dedicated station location. Not yet run under
+Zeus Link, so the panel is unproven.** See *Before you trust it*.
 
 ## What it does
 
@@ -129,6 +130,7 @@ were found the first time it ran:
 | **the collection was `logs`, not `entries`** | `entries` is the reference's HTTP *route*; the collection name was read out of its string table and guessed wrong. Both sides of every unit test used the same wrong name, so the suite stayed green. Shipped, it would have attached to an empty collection and reported a healthy, permanently idle sync |
 | **`station_info` takes its key in the URL** | it is `function station_info($key = '')`, so CodeIgniter fills it from a path segment and never reads a POST body. The body form returns a 401 that reads exactly like a bad key |
 | **`lastfetchedid` is a JSON string** | a real instance returns `"1"` where the fake returned `1`. `GetValue<int>()` threw, killing the sync loop on every cycle — against *every* real Wavelog, forever |
+| **a duplicate is reported as HTTP 400 `abort`** | dedup is what makes at-least-once delivery safe, and it works — but the retry's reply is a *failure*, which the retry policy dead-lettered. One timed-out-but-delivered POST would have left a permanent "1 failed" that pressing retry could never clear |
 
 The first is why `ZeusLogbookDb.Verify()` exists: it now says so loudly on
 startup rather than syncing nothing in silence.
@@ -144,7 +146,7 @@ logbook plugin: a separate LiteDB handle writing contract records into
 `zeus-logbook.db`, so every test starts from a log this plugin did not create.
 
 ```sh
-dotnet test                                    # 158 tests, no network, no radio
+dotnet test                                    # 163 tests, no network, no radio
 dotnet run --project tools/FakeWavelog -- 8099 # drive it by hand instead
 ```
 

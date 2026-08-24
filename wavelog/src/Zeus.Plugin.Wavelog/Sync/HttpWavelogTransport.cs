@@ -30,6 +30,18 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
             @string = adif,
         };
         var (outcome, json) = await SendAsync(config.Endpoint("qso"), body, ct).ConfigureAwait(false);
+
+        // A duplicate is success. Wavelog deduplicates on callsign + time to the
+        // minute + band + mode + station, which is what makes at-least-once
+        // delivery safe here — but it reports the skip as HTTP 400
+        // status="abort", which the retry policy would dead-letter. The operator
+        // would then see a permanent failure for a QSO that is sitting in their
+        // log, and pressing retry would fail forever.
+        //
+        // Only found by pushing the same contact twice at a real instance; the
+        // fake used to answer "created" with a zero count.
+        if (IsOnlyDuplicates(json)) return WavelogOutcome.Success();
+
         if (!outcome.IsSuccess) return outcome;
 
         var status = json?["status"]?.GetValue<string>();
@@ -135,7 +147,16 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
         var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
-            return (WavelogOutcome.HttpStatus((int)response.StatusCode, Trim(text)), null);
+        {
+            // Parse the body anyway. Wavelog says a great deal in the body of a
+            // 400 — including that the QSO we are "failing" to send is already
+            // safely in the log — and a caller that only sees the status code
+            // cannot tell that apart from a real rejection.
+            JsonNode? failure = null;
+            try { failure = JsonNode.Parse(string.IsNullOrWhiteSpace(text) ? "null" : text); }
+            catch (JsonException) { /* not JSON; the trimmed text is all we have */ }
+            return (WavelogOutcome.HttpStatus((int)response.StatusCode, Trim(text)), failure);
+        }
 
         try
         {
@@ -179,6 +200,35 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// True when Wavelog rejected the post and <em>every</em> reason was that it
+    /// already had the contact.
+    ///
+    /// <para>Deliberately strict. One item is posted per outbox row, so in
+    /// practice this is a single message — but a reply that mixes a duplicate
+    /// with a genuine error must still be treated as an error, or a real problem
+    /// hides behind a benign one.</para>
+    /// </summary>
+    internal static bool IsOnlyDuplicates(JsonNode? json)
+    {
+        if (json?["messages"] is not JsonArray messages) return false;
+
+        var sawDuplicate = false;
+        foreach (var message in messages)
+        {
+            var text = message?.GetValueKind() == JsonValueKind.String
+                ? message.GetValue<string>()
+                : message?.ToString();
+            if (string.IsNullOrWhiteSpace(text)) continue;   // Wavelog pads with ""
+
+            if (text.Contains("Duplicate", StringComparison.OrdinalIgnoreCase))
+                sawDuplicate = true;
+            else
+                return false;                                 // something else is wrong too
+        }
+        return sawDuplicate;
     }
 
     private async Task<(WavelogOutcome, JsonNode?)> GetAsync(string url, CancellationToken ct)
