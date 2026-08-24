@@ -1,6 +1,6 @@
 # Prompt — Wavelog plugin, phase 2: enrichment
 
-Paste this into a session started in `~/Repos/on8st/zeus-plugins`.
+Paste this into a session started in `~/Repos/on8st/zeus-plugins/wavelog`.
 
 **Do not start this phase until the phase-1 gate has been met.** See the bottom
 of this file.
@@ -12,7 +12,7 @@ new-grid alerts.
 
 ## Read first
 
-1. `~/Repos/on8st/station-engine/docs/wavelog-logger-plugin/source/wavelog-logger-plugin.md`
+1. `../docs/design/source/design.md`
    §8 (features) and §9 (phases)
 2. The phase-1 code you are extending
 3. `~/Repos/on8st/wavelog` @ `af32561` — `application/controllers/Api.php`,

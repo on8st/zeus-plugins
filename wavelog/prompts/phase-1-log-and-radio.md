@@ -1,6 +1,6 @@
 # Prompt — Wavelog plugin, phase 1: log and radio
 
-Paste this into a session started in `~/Repos/on8st/zeus-plugins`.
+Paste this into a session started in `~/Repos/on8st/zeus-plugins/wavelog`.
 
 ---
 
@@ -8,7 +8,7 @@ Build **phase 1** of the Wavelog logger plugin for the Zeus SDR station engine.
 
 ## Read first, in this order
 
-1. `~/Repos/on8st/station-engine/docs/wavelog-logger-plugin/source/wavelog-logger-plugin.md`
+1. `../docs/design/source/design.md`
    — the design. It is the specification; follow it. Where you disagree with it,
    say so before writing code rather than quietly diverging.
 2. `~/Repos/on8st/station-engine/docs/plugins-how-to.md` — how the plugin

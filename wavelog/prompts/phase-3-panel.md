@@ -1,6 +1,6 @@
 # Prompt — Wavelog plugin, phase 3: the config panel
 
-Paste this into a session started in `~/Repos/on8st/zeus-plugins`.
+Paste this into a session started in `~/Repos/on8st/zeus-plugins/wavelog`.
 
 **This phase is blocked on external information.** Check the unblocking
 condition below before starting.
