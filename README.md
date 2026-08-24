@@ -8,6 +8,7 @@ Plugins for the Zeus SDR station engine, written against
 
 ```
 zeus-plugins/
+├── docs/                 cross-plugin reference — the engine, the framework
 └── <plugin>/
     ├── prompts/          implementation prompts, one per phase
     ├── docs/design/      the design — rendering at the root, SSOT in source/
@@ -34,9 +35,10 @@ and excluded from upstream.
 
 | What | Where |
 |---|---|
-| Framework how-to | `station-engine/docs/plugins-how-to.md` |
+| Framework how-to | `docs/plugin-framework-how-to.md` |
 | Wavelog plugin design (SSOT) | `wavelog/docs/design/source/design.md` |
 | Same, rendered | https://claude.ai/code/artifact/5718e906-4e86-4f53-bf7b-f15da052d487 |
+| Engine architecture | `docs/station-engine-architecture.html` |
 | Contracts to compile against | `station-engine/Zeus.Plugins.Contracts` |
 | Wavelog source (verified against) | `~/Repos/on8st/wavelog` @ `af32561` |
 

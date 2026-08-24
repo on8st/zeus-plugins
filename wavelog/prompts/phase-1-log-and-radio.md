@@ -11,7 +11,7 @@ Build **phase 1** of the Wavelog logger plugin for the Zeus SDR station engine.
 1. `../docs/design/source/design.md`
    — the design. It is the specification; follow it. Where you disagree with it,
    say so before writing code rather than quietly diverging.
-2. `~/Repos/on8st/station-engine/docs/plugins-how-to.md` — how the plugin
+2. `../../docs/plugin-framework-how-to.md` — how the plugin
    framework works. §10 and §11 in particular.
 3. `~/Repos/on8st/station-engine/Zeus.Plugins.Contracts/` — the interfaces you
    implement. Read them; do not infer them from the design doc.

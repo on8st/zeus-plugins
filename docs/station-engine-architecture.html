@@ -1,0 +1,851 @@
+<title>Station Engine Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;450;600&display=swap">
+
+<style>
+:root{
+  --bg:#EDF1F4;
+  --surface:#FFFFFF;
+  --surface-2:#E1E8ED;
+  --ink:#101A21;
+  --ink-2:#3F515E;
+  --ink-3:#6B7F8E;
+  --rule:#C6D1D9;
+  --rule-soft:#DBE3E9;
+  --accent:#B26B0E;
+  --rx:#16708C;
+  --tx:#AE3D26;
+
+  --f-display:"Chakra Petch","Segoe UI Semibold",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0C1216;
+    --surface:#131C22;
+    --surface-2:#1A242C;
+    --ink:#DDE6EC;
+    --ink-2:#A2B2BE;
+    --ink-3:#738593;
+    --rule:#25333C;
+    --rule-soft:#1C282F;
+    --accent:#E8A33D;
+    --rx:#54B6D2;
+    --tx:#E46E50;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0C1216;
+  --surface:#131C22;
+  --surface-2:#1A242C;
+  --ink:#DDE6EC;
+  --ink-2:#A2B2BE;
+  --ink-3:#738593;
+  --rule:#25333C;
+  --rule-soft:#1C282F;
+  --accent:#E8A33D;
+  --rx:#54B6D2;
+  --tx:#E46E50;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--f-body);
+  font-size:16.5px;
+  line-height:1.62;
+  margin:0;
+  padding:0 24px 96px;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1140px;margin:0 auto}
+.prose{max-width:67ch}
+p,ul,ol{margin:0 0 1.05em}
+a{color:var(--accent)}
+
+/* ---- masthead ---- */
+.masthead{
+  padding:72px 0 40px;
+  border-bottom:2px solid var(--ink);
+  margin-bottom:8px;
+}
+.kicker{
+  font-family:var(--f-display);
+  font-weight:600;
+  font-size:12px;
+  letter-spacing:.20em;
+  text-transform:uppercase;
+  color:var(--accent);
+  margin:0 0 18px;
+}
+h1{
+  font-family:var(--f-display);
+  font-weight:700;
+  font-size:clamp(38px,6.2vw,68px);
+  line-height:1.02;
+  letter-spacing:-.015em;
+  text-wrap:balance;
+  margin:0 0 20px;
+}
+.standfirst{
+  max-width:60ch;
+  font-size:19px;
+  line-height:1.55;
+  color:var(--ink-2);
+  margin:0 0 32px;
+}
+.meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 28px;
+  font-family:var(--f-mono);
+  font-size:12.5px;
+  color:var(--ink-3);
+  margin:0;
+}
+.meta span{white-space:nowrap}
+.meta b{color:var(--ink-2);font-weight:500}
+
+/* ---- stat band ---- */
+.stats{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+  gap:1px;
+  background:var(--rule);
+  border-block:1px solid var(--rule);
+  margin:0 0 64px;
+}
+.stat{background:var(--bg);padding:20px 18px}
+.stat dt{
+  font-family:var(--f-display);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+  margin:0 0 6px;
+}
+.stat dd{
+  margin:0;
+  font-family:var(--f-mono);
+  font-size:22px;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink);
+}
+.stat dd small{font-size:12px;color:var(--ink-3);display:block;margin-top:2px;font-family:var(--f-body)}
+
+/* ---- sections ---- */
+section{margin:0 0 76px;scroll-margin-top:24px}
+.layer{
+  display:flex;
+  align-items:baseline;
+  gap:14px;
+  margin:0 0 6px;
+}
+.layer::before{
+  content:"";
+  flex:0 0 26px;
+  height:2px;
+  background:var(--accent);
+  transform:translateY(-4px);
+}
+.layer span{
+  font-family:var(--f-display);
+  font-weight:600;
+  font-size:11.5px;
+  letter-spacing:.20em;
+  text-transform:uppercase;
+  color:var(--accent);
+}
+h2{
+  font-family:var(--f-display);
+  font-weight:600;
+  font-size:clamp(26px,3.4vw,36px);
+  line-height:1.12;
+  letter-spacing:-.01em;
+  text-wrap:balance;
+  margin:0 0 22px;
+}
+h3{
+  font-family:var(--f-display);
+  font-weight:600;
+  font-size:19px;
+  letter-spacing:.005em;
+  margin:38px 0 12px;
+}
+code{
+  font-family:var(--f-mono);
+  font-size:.875em;
+  background:var(--surface-2);
+  padding:.1em .34em;
+  border-radius:2px;
+}
+
+/* ---- figures ---- */
+figure{
+  margin:40px 0;
+  padding:26px 26px 20px;
+  background:var(--surface);
+  border:1px solid var(--rule);
+}
+.figscroll{overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;min-width:640px;color:var(--ink-2)}
+figcaption{
+  margin-top:18px;
+  padding-top:14px;
+  border-top:1px solid var(--rule-soft);
+  font-size:14px;
+  line-height:1.55;
+  color:var(--ink-2);
+  max-width:76ch;
+}
+figcaption b{color:var(--ink);font-weight:600}
+
+/* svg primitives */
+.dbox{fill:var(--surface-2);stroke:var(--ink-3);stroke-width:1}
+.dbox-key{fill:var(--surface-2);stroke:var(--accent);stroke-width:1.6}
+.dframe{fill:none;stroke:var(--ink-3);stroke-width:1;stroke-dasharray:5 4}
+.dlbl{font-family:var(--f-display);font-weight:600;font-size:13px;fill:var(--ink)}
+.dsub{font-family:var(--f-mono);font-size:10.5px;fill:var(--ink-3)}
+.dnum{font-family:var(--f-mono);font-size:11px;fill:var(--ink-2)}
+.dtag{font-family:var(--f-display);font-weight:600;font-size:10.5px;letter-spacing:.14em;fill:var(--ink-3)}
+.dline{stroke:var(--ink-2);stroke-width:1.4;fill:none}
+.dline-rx{stroke:var(--rx);stroke-width:1.8;fill:none}
+.dline-tx{stroke:var(--tx);stroke-width:1.8;fill:none}
+.dline-soft{stroke:var(--ink-3);stroke-width:1;fill:none;stroke-dasharray:4 4}
+.ah-fg{fill:var(--ink-2)}
+.ah-rx{fill:var(--rx)}
+.ah-tx{fill:var(--tx)}
+.trx{fill:var(--rx)}
+.ttx{fill:var(--tx)}
+
+/* ---- tables ---- */
+.tblscroll{overflow-x:auto;margin:28px 0}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+th,td{text-align:left;padding:9px 14px 9px 0;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+th{
+  font-family:var(--f-display);
+  font-weight:600;
+  font-size:11px;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+  border-bottom:1px solid var(--rule);
+  white-space:nowrap;
+}
+td.mono,th.mono{font-family:var(--f-mono);font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.mono{color:var(--ink-2)}
+
+/* ---- callout ---- */
+.note{
+  border-left:2px solid var(--accent);
+  padding:2px 0 2px 20px;
+  margin:30px 0;
+  max-width:64ch;
+  color:var(--ink-2);
+  font-size:15.5px;
+}
+.note b{color:var(--ink)}
+
+/* ---- key/value list ---- */
+.kv{
+  display:grid;
+  grid-template-columns:minmax(150px,auto) 1fr;
+  gap:0 26px;
+  margin:26px 0;
+  font-size:15px;
+}
+.kv dt{
+  font-family:var(--f-mono);
+  font-size:13px;
+  color:var(--accent);
+  padding:9px 0;
+  border-top:1px solid var(--rule-soft);
+}
+.kv dd{margin:0;padding:9px 0;border-top:1px solid var(--rule-soft);color:var(--ink-2)}
+
+footer{
+  border-top:2px solid var(--ink);
+  padding-top:24px;
+  font-size:13.5px;
+  color:var(--ink-3);
+  max-width:70ch;
+}
+
+@media (max-width:640px){
+  body{padding:0 18px 64px}
+  .kv{grid-template-columns:1fr;gap:0}
+  .kv dd{padding-top:0;border-top:none}
+  figure{padding:18px 16px 14px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="kicker">OpenHPSDR · Zeus SDR · v2.0.9</p>
+  <h1>Station Engine<br>Architecture</h1>
+  <p class="standfirst">A headless radio process for Protocol&nbsp;1 and Protocol&nbsp;2 hardware. It owns the transport, the DSP, transmit control and safety, and a versioned station protocol — and it draws nothing. Everything you see is somebody else's client.</p>
+  <p class="meta">
+    <span><b>Source</b> Zeus-SDR/station-engine @ v2.0.9</span>
+    <span><b>Target</b> net10.0</span>
+    <span><b>Read</b> 129k lines C# · 23 MB vendored C</span>
+  </p>
+</header>
+
+<dl class="stats">
+  <div class="stat"><dt>Assemblies</dt><dd>11<small>one dominates</small></dd></div>
+  <div class="stat"><dt>HTTP routes</dt><dd>199<small>under /api</small></dd></div>
+  <div class="stat"><dt>Wire frames</dt><dd>35<small>one type byte each</small></dd></div>
+  <div class="stat"><dt>Receivers</dt><dd>10<small>8 hardware DDCs</small></dd></div>
+  <div class="stat"><dt>Audio rate</dt><dd>48k<small>fixed, both ways</small></dd></div>
+  <div class="stat"><dt>Listens on</dt><dd>127.0.0.1<small>unless told otherwise</small></dd></div>
+</dl>
+
+<section>
+  <p class="layer"><span>Process</span></p>
+  <h2>One process, one port, no window</h2>
+  <div class="prose">
+    <p>The engine is an ASP.NET Core application with no UI project anywhere in the tree. It is started with a port and it binds loopback:</p>
+    <p><code>StationEngine --port 6060</code></p>
+    <p>That single port carries both halves of the station protocol: ordinary HTTP for control and configuration, and one WebSocket at <code>/ws</code> for everything that streams. A client discovers what it is talking to at <code>/api/station/version</code>. Four other flags exist — <code>--bind lan</code>, two LAN HTTPS ports, and <code>--native-audio-output</code> — and the parser rejects contradictory combinations up front rather than half-opening a listener.</p>
+    <p>Around that core sit three more listeners that are not the station protocol at all: a CAT server, a TCI server sharing Kestrel, and an optional serial CAT port. They exist so that logging software, contest loggers and third-party SDR applications can drive the same radio without going through the Zeus client.</p>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 1040 650" role="img" aria-label="Overall architecture: an HPSDR radio exchanges UDP with the transport layer, which feeds a DSP pipeline and WDSP, which feeds a streaming hub and HTTP API consumed by clients; CAT and TCI servers serve third-party applications; stores, plugins and native libraries support everything.">
+      <defs>
+        <marker id="ov-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-fg" points="0,1 10,5 0,9"/></marker>
+        <marker id="ov-rx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-rx" points="0,1 10,5 0,9"/></marker>
+        <marker id="ov-tx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-tx" points="0,1 10,5 0,9"/></marker>
+      </defs>
+
+      <!-- radio -->
+      <rect class="dbox" x="24" y="150" width="130" height="120" rx="2"/>
+      <text class="dlbl" x="89" y="196" text-anchor="middle">HPSDR radio</text>
+      <text class="dsub" x="89" y="216" text-anchor="middle">ADC · DDC · DUC</text>
+      <text class="dsub" x="89" y="232" text-anchor="middle">FPGA gateware</text>
+
+      <!-- process boundary -->
+      <rect class="dframe" x="180" y="40" width="700" height="570" rx="3"/>
+      <text class="dtag" x="196" y="66">STATIONENGINE PROCESS · 127.0.0.1</text>
+
+      <!-- transports -->
+      <rect class="dbox-key" x="200" y="120" width="180" height="170" rx="2"/>
+      <text class="dlbl" x="290" y="150" text-anchor="middle">Transports</text>
+      <text class="dsub" x="290" y="180" text-anchor="middle">Zeus.Protocol1</text>
+      <text class="dsub" x="290" y="196" text-anchor="middle">UDP 1024 · EP2 / EP6</text>
+      <text class="dsub" x="290" y="228" text-anchor="middle">Zeus.Protocol2</text>
+      <text class="dsub" x="290" y="244" text-anchor="middle">UDP 1025 – 1042</text>
+      <text class="dsub" x="290" y="270" text-anchor="middle">discovery · framing · pacing</text>
+
+      <!-- core -->
+      <rect class="dbox-key" x="410" y="120" width="190" height="80" rx="2"/>
+      <text class="dlbl" x="505" y="152" text-anchor="middle">DspPipelineService</text>
+      <text class="dsub" x="505" y="172" text-anchor="middle">routes IQ to ≤ 10 receivers</text>
+
+      <rect class="dbox" x="410" y="225" width="190" height="80" rx="2"/>
+      <text class="dlbl" x="505" y="257" text-anchor="middle">Zeus.Dsp → WDSP</text>
+      <text class="dsub" x="505" y="277" text-anchor="middle">P/Invoke · RXA / TXA</text>
+
+      <rect class="dbox" x="410" y="330" width="190" height="80" rx="2"/>
+      <text class="dlbl" x="505" y="362" text-anchor="middle">TxService</text>
+      <text class="dsub" x="505" y="382" text-anchor="middle">MOX · TUN · safety gate</text>
+
+      <!-- surface -->
+      <rect class="dbox-key" x="635" y="120" width="225" height="80" rx="2"/>
+      <text class="dlbl" x="747" y="152" text-anchor="middle">StreamingHub</text>
+      <text class="dsub" x="747" y="172" text-anchor="middle">35 binary frame types · /ws</text>
+
+      <rect class="dbox" x="635" y="225" width="225" height="60" rx="2"/>
+      <text class="dlbl" x="747" y="252" text-anchor="middle">HTTP endpoints</text>
+      <text class="dsub" x="747" y="270" text-anchor="middle">199 routes under /api</text>
+
+      <rect class="dbox" x="635" y="310" width="225" height="48" rx="2"/>
+      <text class="dlbl" x="747" y="340" text-anchor="middle">CAT server</text>
+
+      <rect class="dbox" x="635" y="382" width="225" height="48" rx="2"/>
+      <text class="dlbl" x="747" y="412" text-anchor="middle">TCI server</text>
+
+      <!-- support band -->
+      <line class="dline-soft" x1="200" y1="455" x2="860" y2="455"/>
+      <text class="dsub" x="200" y="448">used by every service above</text>
+      <rect class="dbox" x="200" y="470" width="200" height="66" rx="2"/>
+      <text class="dlbl" x="300" y="500" text-anchor="middle">LiteDB stores</text>
+      <text class="dsub" x="300" y="519" text-anchor="middle">station-engine.db</text>
+      <rect class="dbox" x="430" y="470" width="190" height="66" rx="2"/>
+      <text class="dlbl" x="525" y="500" text-anchor="middle">Plugin host</text>
+      <text class="dsub" x="525" y="519" text-anchor="middle">VST / AU scan · ABI</text>
+      <rect class="dbox" x="650" y="470" width="210" height="66" rx="2"/>
+      <text class="dlbl" x="755" y="500" text-anchor="middle">Native libraries</text>
+      <text class="dsub" x="755" y="519" text-anchor="middle">wdsp · codec2 · rnnoise</text>
+
+      <!-- clients -->
+      <rect class="dbox" x="900" y="120" width="126" height="110" rx="2"/>
+      <text class="dlbl" x="963" y="164" text-anchor="middle">Zeus Link</text>
+      <text class="dsub" x="963" y="184" text-anchor="middle">panadapter</text>
+      <text class="dsub" x="963" y="200" text-anchor="middle">waterfall · audio</text>
+      <rect class="dbox" x="900" y="310" width="126" height="48" rx="2"/>
+      <text class="dsub" x="963" y="332" text-anchor="middle">logging /</text>
+      <text class="dsub" x="963" y="346" text-anchor="middle">rig control</text>
+      <rect class="dbox" x="900" y="382" width="126" height="48" rx="2"/>
+      <text class="dsub" x="963" y="404" text-anchor="middle">third-party</text>
+      <text class="dsub" x="963" y="418" text-anchor="middle">SDR apps</text>
+
+      <!-- RX flow -->
+      <line class="dline-rx" x1="156" y1="186" x2="196" y2="172" marker-end="url(#ov-rx)"/>
+      <text class="dsub trx" x="150" y="160">RX IQ</text>
+      <line class="dline-rx" x1="382" y1="160" x2="406" y2="160" marker-end="url(#ov-rx)"/>
+      <line class="dline-rx" x1="490" y1="202" x2="490" y2="221" marker-end="url(#ov-rx)"/>
+      <text class="dsub trx" x="440" y="216">IQ</text>
+      <line class="dline-rx" x1="530" y1="223" x2="530" y2="204" marker-end="url(#ov-rx)"/>
+      <text class="dsub trx" x="540" y="216">audio + spectra</text>
+      <line class="dline-rx" x1="602" y1="160" x2="631" y2="160" marker-end="url(#ov-rx)"/>
+      <line class="dline-rx" x1="862" y1="150" x2="896" y2="150" marker-end="url(#ov-rx)"/>
+      <text class="dsub trx" x="866" y="140">WebSocket</text>
+      <polyline class="dline" points="862,255 878,255 878,212 896,212" marker-end="url(#ov-a)"/>
+      <text class="dsub" x="866" y="272">HTTP</text>
+      <line class="dline" x1="862" y1="334" x2="896" y2="334" marker-end="url(#ov-a)"/>
+      <line class="dline" x1="862" y1="406" x2="896" y2="406" marker-end="url(#ov-a)"/>
+
+      <!-- TX flow -->
+      <polyline class="dline-tx" points="700,202 700,432 505,432 505,414" marker-end="url(#ov-tx)"/>
+      <text class="dsub ttx" x="596" y="426" text-anchor="middle">mic PCM 0x20</text>
+      <line class="dline-tx" x1="470" y1="328" x2="470" y2="309" marker-end="url(#ov-tx)"/>
+      <text class="dsub ttx" x="360" y="322">TX audio</text>
+      <polyline class="dline-tx" points="408,262 392,262 392,232 384,232" marker-end="url(#ov-tx)"/>
+      <line class="dline-tx" x1="198" y1="244" x2="158" y2="244" marker-end="url(#ov-tx)"/>
+      <text class="dsub ttx" x="164" y="264">TX IQ</text>
+
+      <!-- legend -->
+      <line class="dline-rx" x1="24" y1="600" x2="56" y2="600"/>
+      <text class="dsub" x="62" y="604">receive path</text>
+      <line class="dline-tx" x1="150" y1="600" x2="182" y2="600"/>
+      <text class="dsub" x="188" y="604">transmit path</text>
+    </svg>
+    </div>
+    <figcaption><b>The whole engine.</b> Receive flows left to right; transmit is a return loop that re-enters the same DSP and transport layers from the opposite side. Note what does <em>not</em> appear: nothing renders, and no client is inside the boundary. The CAT and TCI servers hang off the same core so a logging program and the Zeus client can drive one radio at once.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <p class="layer"><span>Assemblies</span></p>
+  <h2>Eleven projects, and one of them is the engine</h2>
+  <div class="prose">
+    <p>The dependency graph is unusually flat, and unusually lopsided. <code>Station.Engine.Hosting</code> is 86,000 lines — two thirds of all the C# in the repository — against 656 lines in the executable that starts it. The entry point is a launcher; the hosting library is the product.</p>
+    <p>The shape underneath is disciplined, though. <code>Zeus.Contracts</code> is a leaf: it references nothing, and the two transports and the DSP layer all depend on it. That is what lets a protocol change be a change to one wire type rather than a change everywhere.</p>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 900 500" role="img" aria-label="Assembly dependency graph across five levels, from the entry point down through the hosting library, transports and DSP, to leaf contract and ring-buffer assemblies.">
+      <defs>
+        <marker id="pg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-fg" points="0,1 10,5 0,9"/></marker>
+      </defs>
+
+      <text class="dtag" x="10" y="26">DEPENDS ON ↓</text>
+
+      <!-- L4 -->
+      <rect class="dbox-key" x="300" y="42" width="240" height="48" rx="2"/>
+      <text class="dlbl" x="420" y="66" text-anchor="middle">StationEngine</text>
+      <text class="dsub" x="420" y="82" text-anchor="middle">entry point · 656 lines</text>
+
+      <!-- L3 -->
+      <rect class="dbox" x="300" y="132" width="240" height="48" rx="2"/>
+      <text class="dlbl" x="420" y="156" text-anchor="middle">Zeus.Plugins.Host</text>
+      <text class="dsub" x="420" y="172" text-anchor="middle">7,839 lines</text>
+
+      <!-- L2 -->
+      <rect class="dbox-key" x="40" y="222" width="470" height="48" rx="2"/>
+      <text class="dlbl" x="275" y="246" text-anchor="middle">Station.Engine.Hosting</text>
+      <text class="dsub" x="275" y="262" text-anchor="middle">264 files · 85,920 lines · endpoints, stores, services, subsystems</text>
+
+      <!-- L1 -->
+      <rect class="dbox" x="40" y="312" width="150" height="48" rx="2"/>
+      <text class="dlbl" x="115" y="336" text-anchor="middle">Zeus.Protocol1</text>
+      <text class="dsub" x="115" y="352" text-anchor="middle">7,532</text>
+      <rect class="dbox" x="210" y="312" width="150" height="48" rx="2"/>
+      <text class="dlbl" x="285" y="336" text-anchor="middle">Zeus.Protocol2</text>
+      <text class="dsub" x="285" y="352" text-anchor="middle">6,899</text>
+      <rect class="dbox" x="380" y="312" width="130" height="48" rx="2"/>
+      <text class="dlbl" x="445" y="336" text-anchor="middle">Zeus.Dsp</text>
+      <text class="dsub" x="445" y="352" text-anchor="middle">9,127</text>
+      <rect class="dbox" x="610" y="312" width="180" height="48" rx="2"/>
+      <text class="dlbl" x="700" y="340" text-anchor="middle">Plugins.VstHostStub</text>
+
+      <!-- L0 -->
+      <rect class="dbox-key" x="40" y="402" width="190" height="48" rx="2"/>
+      <text class="dlbl" x="135" y="426" text-anchor="middle">Zeus.Contracts</text>
+      <text class="dsub" x="135" y="442" text-anchor="middle">8,649 · frames + DTOs</text>
+      <rect class="dbox" x="250" y="402" width="150" height="48" rx="2"/>
+      <text class="dlbl" x="325" y="426" text-anchor="middle">Station.AudioRing</text>
+      <text class="dsub" x="325" y="442" text-anchor="middle">shared memory</text>
+      <rect class="dbox" x="420" y="402" width="170" height="48" rx="2"/>
+      <text class="dlbl" x="505" y="426" text-anchor="middle">Station.AudioIpc</text>
+      <text class="dsub" x="505" y="442" text-anchor="middle">Spike</text>
+      <rect class="dbox" x="610" y="402" width="180" height="48" rx="2"/>
+      <text class="dlbl" x="700" y="430" text-anchor="middle">Plugins.Contracts</text>
+
+      <!-- edges -->
+      <polyline class="dline" points="330,92 270,92 270,218" marker-end="url(#pg-a)"/>
+      <line class="dline" x1="420" y1="92" x2="420" y2="128" marker-end="url(#pg-a)"/>
+      <line class="dline" x1="360" y1="182" x2="360" y2="218" marker-end="url(#pg-a)"/>
+      <polyline class="dline" points="500,182 500,200 700,200 700,308" marker-end="url(#pg-a)"/>
+      <polyline class="dline" points="522,156 830,156 830,426 796,426" marker-end="url(#pg-a)"/>
+
+      <line class="dline" x1="115" y1="272" x2="115" y2="308" marker-end="url(#pg-a)"/>
+      <line class="dline" x1="285" y1="272" x2="285" y2="308" marker-end="url(#pg-a)"/>
+      <line class="dline" x1="445" y1="272" x2="445" y2="308" marker-end="url(#pg-a)"/>
+      <polyline class="dline" points="370,272 370,398" marker-end="url(#pg-a)"/>
+      <polyline class="dline" points="490,272 490,290 575,290 575,398" marker-end="url(#pg-a)"/>
+      <polyline class="dline-soft" points="60,272 22,272 22,414 36,414" marker-end="url(#pg-a)"/>
+
+      <line class="dline" x1="100" y1="362" x2="100" y2="398" marker-end="url(#pg-a)"/>
+      <polyline class="dline" points="255,362 255,380 165,380 165,398" marker-end="url(#pg-a)"/>
+      <polyline class="dline" points="420,362 420,388 205,388 205,398" marker-end="url(#pg-a)"/>
+      <line class="dline" x1="700" y1="362" x2="700" y2="398" marker-end="url(#pg-a)"/>
+    </svg>
+    </div>
+    <figcaption><b>Every edge is a project reference; the arrow points at the dependency.</b> Line counts are C# only. The dashed edge is <code>Station.Engine.Hosting → Zeus.Contracts</code>, routed around the level below it because it skips a rank. <code>Zeus.Plugins.Contracts</code> depends on nothing — a plugin author compiles against it without pulling in the engine.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <p class="layer"><span>Transport</span></p>
+  <h2>Two protocols with incompatible ideas about sockets</h2>
+  <div class="prose">
+    <p>Both HPSDR protocols run over raw UDP to a radio discovered by broadcast on port 1024. That is where the similarity ends, and the difference is structural rather than cosmetic.</p>
+    <p>Protocol 1 multiplexes everything through one socket. IQ, microphone audio, PTT state and control all share the same datagram stream, distinguished by endpoint numbers inside the payload — EP2 outbound, EP6 inbound. Protocol 2 gives each function its own UDP port, so a receiver, the wideband ADC snapshot, the transmit IQ and the command channel are separate sockets that can be reasoned about, rate-measured and stalled independently.</p>
+    <p>That is why the engine carries two full client implementations, 7,500 and 6,900 lines, rather than one with a switch.</p>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 900 480" role="img" aria-label="Comparison of Protocol 1 and Protocol 2 socket topology: Protocol 1 multiplexes two endpoint streams over a single UDP port, Protocol 2 uses eight separate port ranges by function.">
+      <defs>
+        <marker id="pp-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-fg" points="0,1 10,5 0,9"/></marker>
+        <marker id="pp-rx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-rx" points="0,1 10,5 0,9"/></marker>
+        <marker id="pp-tx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-tx" points="0,1 10,5 0,9"/></marker>
+      </defs>
+
+      <!-- P1 panel -->
+      <text class="dtag" x="20" y="28">PROTOCOL 1 — ONE SOCKET</text>
+      <rect class="dbox" x="20" y="60" width="86" height="340" rx="2"/>
+      <text class="dlbl" x="63" y="226" text-anchor="middle">engine</text>
+      <rect class="dbox" x="330" y="60" width="80" height="340" rx="2"/>
+      <text class="dlbl" x="370" y="226" text-anchor="middle">radio</text>
+
+      <line class="dline-tx" x1="110" y1="180" x2="326" y2="180" marker-end="url(#pp-tx)"/>
+      <text class="dsub ttx" x="218" y="170" text-anchor="middle">EP2 · 126 IQ pairs / packet</text>
+      <line class="dline-rx" x1="326" y1="280" x2="110" y2="280" marker-end="url(#pp-rx)"/>
+      <text class="dsub trx" x="218" y="270" text-anchor="middle">EP6 · IQ + mic + PTT + key</text>
+
+      <path class="dline-soft" d="M140 150 L128 150 L128 310 L140 310"/>
+      <text class="dsub" x="150" y="234">UDP 1024</text>
+      <text class="dsub" x="150" y="248">both directions</text>
+      <text class="dsub" x="20" y="426">48 / 96 / 192 / 384 kHz</text>
+      <text class="dsub" x="20" y="442">Metis · Hermes · Angelia · Orion</text>
+      <text class="dsub" x="20" y="458">Hermes-Lite 2 · HermesC10</text>
+
+      <!-- divider -->
+      <line class="dline-soft" x1="440" y1="20" x2="440" y2="460"/>
+
+      <!-- P2 panel -->
+      <text class="dtag" x="470" y="28">PROTOCOL 2 — A PORT PER FUNCTION</text>
+      <rect class="dbox" x="470" y="60" width="86" height="340" rx="2"/>
+      <text class="dlbl" x="513" y="226" text-anchor="middle">engine</text>
+      <rect class="dbox" x="800" y="60" width="80" height="340" rx="2"/>
+      <text class="dlbl" x="840" y="226" text-anchor="middle">radio</text>
+
+      <line class="dline" x1="560" y1="92" x2="796" y2="92" marker-end="url(#pp-a)"/>
+      <text class="dsub" x="678" y="84" text-anchor="middle">1025 · command / DDC enable</text>
+      <line class="dline" x1="796" y1="130" x2="560" y2="130" marker-end="url(#pp-a)"/>
+      <text class="dsub" x="678" y="122" text-anchor="middle">1025 · hi-priority status</text>
+      <line class="dline-tx" x1="560" y1="168" x2="796" y2="168" marker-end="url(#pp-tx)"/>
+      <text class="dsub ttx" x="678" y="160" text-anchor="middle">1026 · TX specific</text>
+      <line class="dline-rx" x1="796" y1="206" x2="560" y2="206" marker-end="url(#pp-rx)"/>
+      <text class="dsub trx" x="678" y="198" text-anchor="middle">1026 · radio mic</text>
+      <line class="dline-rx" x1="796" y1="244" x2="560" y2="244" marker-end="url(#pp-rx)"/>
+      <text class="dsub trx" x="678" y="236" text-anchor="middle">1027 – 1034 · wideband ADC</text>
+      <line class="dline-tx" x1="560" y1="282" x2="796" y2="282" marker-end="url(#pp-tx)"/>
+      <text class="dsub ttx" x="678" y="274" text-anchor="middle">1028 · speaker audio</text>
+      <line class="dline-tx" x1="560" y1="320" x2="796" y2="320" marker-end="url(#pp-tx)"/>
+      <text class="dsub ttx" x="678" y="312" text-anchor="middle">1029 · TX IQ · 240 samples / 1444 B</text>
+      <line class="dline-rx" x1="796" y1="358" x2="560" y2="358" marker-end="url(#pp-rx)"/>
+      <text class="dsub trx" x="678" y="350" text-anchor="middle">1035 – 1042 · DDC0 – DDC7 RX IQ</text>
+
+      <text class="dsub" x="470" y="426">8 hardware DDCs · 10 receiver slots</text>
+      <text class="dsub" x="470" y="442">Saturn / G2 class · PureSignal feedback</text>
+      <text class="dsub" x="470" y="458">paired on 1035 when armed</text>
+    </svg>
+    </div>
+    <figcaption><b>The difference is the socket count, and it propagates upward.</b> Protocol 2's per-function ports are what let the engine measure a per-port datagram rate and detect that DDC0 alone has stalled — a diagnosis Protocol 1's single multiplexed stream cannot express. Both clients converge on the same internal frame types before the DSP layer sees anything.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p>Board identity matters more than the protocol number. The engine carries a capabilities table keyed on eight board kinds, because what a radio can do — balanced XLR input, line-in gain, bias on the microphone jack, an internal PureSignal coupler — varies inside a single protocol. The transmit-audio source enum has four values, and three of them are only offered on hardware that physically has the jack.</p>
+  </div>
+</section>
+
+<section>
+  <p class="layer"><span>Receive</span></p>
+  <h2>From antenna to browser at 48 kHz</h2>
+  <div class="prose">
+    <p>The receive path is the engine's steady state, and every stage in it is fixed-rate. The radio decimates to one of four IQ rates; WDSP consumes 512-sample blocks and always emits 48 kHz audio; the analyser runs a 16,384-point FFT at 30 frames per second regardless of what the panadapter is showing.</p>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 1060 300" role="img" aria-label="Receive signal path: radio ADC and DDC, packet parser, DSP pipeline routing, WDSP receive channel, then splitting into an analyser FFT producing display frames and 48 kHz PCM audio, both leaving through the streaming hub.">
+      <defs>
+        <marker id="rx-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-rx" points="0,1 10,5 0,9"/></marker>
+      </defs>
+
+      <rect class="dbox" x="16" y="110" width="132" height="66" rx="2"/>
+      <text class="dlbl" x="82" y="140" text-anchor="middle">ADC → DDC</text>
+      <text class="dsub" x="82" y="159" text-anchor="middle">48–384 kHz</text>
+
+      <rect class="dbox" x="178" y="110" width="132" height="66" rx="2"/>
+      <text class="dlbl" x="244" y="140" text-anchor="middle">PacketParser</text>
+      <text class="dsub" x="244" y="159" text-anchor="middle">EP6 · DDC0–7</text>
+
+      <rect class="dbox-key" x="340" y="110" width="150" height="66" rx="2"/>
+      <text class="dlbl" x="415" y="140" text-anchor="middle">DspPipeline</text>
+      <text class="dsub" x="415" y="159" text-anchor="middle">≤ 10 receivers</text>
+
+      <rect class="dbox-key" x="520" y="110" width="132" height="66" rx="2"/>
+      <text class="dlbl" x="586" y="140" text-anchor="middle">WDSP RXA</text>
+      <text class="dsub" x="586" y="159" text-anchor="middle">512-sample blocks</text>
+
+      <rect class="dbox" x="682" y="26" width="160" height="60" rx="2"/>
+      <text class="dlbl" x="762" y="52" text-anchor="middle">Analyzer FFT</text>
+      <text class="dsub" x="762" y="70" text-anchor="middle">16 384 pt · 30 fps</text>
+
+      <rect class="dbox" x="682" y="200" width="160" height="60" rx="2"/>
+      <text class="dlbl" x="762" y="226" text-anchor="middle">Audio out</text>
+      <text class="dsub" x="762" y="244" text-anchor="middle">48 kHz float mono</text>
+
+      <rect class="dbox-key" x="880" y="110" width="150" height="66" rx="2"/>
+      <text class="dlbl" x="955" y="140" text-anchor="middle">StreamingHub</text>
+      <text class="dsub" x="955" y="159" text-anchor="middle">→ /ws</text>
+
+      <line class="dline-rx" x1="150" y1="143" x2="174" y2="143" marker-end="url(#rx-a)"/>
+      <text class="dsub trx" x="162" y="132" text-anchor="middle">UDP</text>
+      <line class="dline-rx" x1="312" y1="143" x2="336" y2="143" marker-end="url(#rx-a)"/>
+      <line class="dline-rx" x1="492" y1="143" x2="516" y2="143" marker-end="url(#rx-a)"/>
+      <text class="dsub trx" x="504" y="132" text-anchor="middle">feed</text>
+
+      <polyline class="dline-rx" points="654,132 668,132 668,56 678,56" marker-end="url(#rx-a)"/>
+      <polyline class="dline-rx" points="654,154 668,154 668,230 678,230" marker-end="url(#rx-a)"/>
+
+      <polyline class="dline-rx" points="844,56 862,56 862,130 876,130" marker-end="url(#rx-a)"/>
+      <text class="dsub trx" x="856" y="46">DisplayFrame 0x01</text>
+      <polyline class="dline-rx" points="844,230 862,230 862,156 876,156" marker-end="url(#rx-a)"/>
+      <text class="dsub trx" x="856" y="252">AudioPcm 0x02</text>
+    </svg>
+    </div>
+    <figcaption><b>One split, two products.</b> The same demodulated stream becomes a spectrum picture and a sound; they leave as different frame types over one socket. Ten receiver slots exist against eight hardware DDCs — the two spare indices are for software receivers, including an optional KiwiSDR the engine can treat as receiver&nbsp;10.</figcaption>
+  </figure>
+
+  <div class="prose">
+    <p>Eleven demodulation modes are exposed, and one of them is a lie in a useful way. FreeDV is not a WDSP mode at all: at the DSP layer it runs as USB, with the Codec2 modem inserted into the audio path through the same plugin seam that carries everything else. The enum comment says never to reorder the values — they are persisted by ordinal.</p>
+  </div>
+</section>
+
+<section>
+  <p class="layer"><span>Transmit</span></p>
+  <h2>The path that can burn something</h2>
+  <div class="prose">
+    <p>Transmit runs the same machinery backwards, with one addition that receive has no equivalent for: a policy module that can refuse. <code>TxService</code> is the only executor of DSP and radio edges, but it evaluates immutable snapshots handed to it by an engine-owned safety module, and a revision token is checked twice — once at the shared egress, and again immediately before each transport send. Admission by policy alone never opens the gate; it opens only after the matching wire transition has actually succeeded.</p>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 1060 330" role="img" aria-label="Transmit signal path from client microphone PCM through the streaming hub, transmit service gated by a safety module, WDSP transmit channel, the Protocol 2 client, and out to the radio's digital up-converter.">
+      <defs>
+        <marker id="tx-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-tx" points="0,1 10,5 0,9"/></marker>
+        <marker id="tx-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-fg" points="0,1 10,5 0,9"/></marker>
+      </defs>
+
+      <rect class="dbox" x="16" y="96" width="146" height="68" rx="2"/>
+      <text class="dlbl" x="89" y="124" text-anchor="middle">Client mic</text>
+      <text class="dsub" x="89" y="143" text-anchor="middle">960 samples · 20 ms</text>
+
+      <rect class="dbox" x="196" y="96" width="146" height="68" rx="2"/>
+      <text class="dlbl" x="269" y="124" text-anchor="middle">StreamingHub</text>
+      <text class="dsub" x="269" y="143" text-anchor="middle">uplink 0x20</text>
+
+      <rect class="dbox-key" x="376" y="96" width="156" height="68" rx="2"/>
+      <text class="dlbl" x="454" y="124" text-anchor="middle">TxService</text>
+      <text class="dsub" x="454" y="143" text-anchor="middle">MOX · TUN</text>
+
+      <rect class="dbox" x="566" y="96" width="146" height="68" rx="2"/>
+      <text class="dlbl" x="639" y="124" text-anchor="middle">WDSP TXA</text>
+      <text class="dsub" x="639" y="143" text-anchor="middle">256 / 512 / 1024</text>
+
+      <rect class="dbox-key" x="746" y="96" width="156" height="68" rx="2"/>
+      <text class="dlbl" x="824" y="124" text-anchor="middle">Protocol2Client</text>
+      <text class="dsub" x="824" y="143" text-anchor="middle">240 smp · 1444 B</text>
+
+      <rect class="dbox" x="936" y="96" width="110" height="68" rx="2"/>
+      <text class="dlbl" x="991" y="124" text-anchor="middle">DUC</text>
+      <text class="dsub" x="991" y="143" text-anchor="middle">192 kHz</text>
+
+      <line class="dline-tx" x1="164" y1="130" x2="192" y2="130" marker-end="url(#tx-a)"/>
+      <line class="dline-tx" x1="344" y1="130" x2="372" y2="130" marker-end="url(#tx-a)"/>
+      <line class="dline-tx" x1="534" y1="130" x2="562" y2="130" marker-end="url(#tx-a)"/>
+      <line class="dline-tx" x1="714" y1="130" x2="742" y2="130" marker-end="url(#tx-a)"/>
+      <line class="dline-tx" x1="904" y1="130" x2="932" y2="130" marker-end="url(#tx-a)"/>
+      <text class="dsub ttx" x="918" y="120" text-anchor="middle">UDP 1029</text>
+
+      <!-- safety -->
+      <rect class="dbox" x="358" y="228" width="192" height="60" rx="2"/>
+      <text class="dlbl" x="454" y="254" text-anchor="middle">Safety module</text>
+      <text class="dsub" x="454" y="272" text-anchor="middle">evaluates snapshots only</text>
+      <line class="dline" x1="454" y1="224" x2="454" y2="168" marker-end="url(#tx-g)"/>
+      <text class="dsub" x="462" y="200">admits · trips</text>
+
+      <!-- pacing note -->
+      <line class="dline-soft" x1="824" y1="228" x2="824" y2="170"/>
+      <text class="dsub" x="746" y="248">800 packets / s · 1.25 ms each</text>
+      <text class="dsub" x="746" y="264">Windows: timeBeginPeriod(1) or</text>
+      <text class="dsub" x="746" y="280">the 15.6 ms timer floors it at ~380</text>
+    </svg>
+    </div>
+    <figcaption><b>Transmit is paced, not buffered.</b> The digital up-converter wants 800 packets per second and will starve if it gets fewer. That single number is why the first executable statement in <code>Main</code> — before the log banner, before argument parsing — raises the Windows timer resolution: at the 15.6 ms default, <code>Thread.Sleep</code> granularity caps the sender at roughly 380 packets per second and un-keying is delayed.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <p class="layer"><span>Startup</span></p>
+  <h2>The order is the design</h2>
+  <div class="prose">
+    <p>Six things happen before the engine will answer a request, and the first three are ordered against specific failures rather than convenience.</p>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 760 420" role="img" aria-label="Six-step startup sequence: raise timer resolution, write the startup banner, apply a pending database restore, build the host with validation, map endpoints, then start the plugin manager.">
+      <defs>
+        <marker id="su-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon class="ah-fg" points="0,1 10,5 0,9"/></marker>
+      </defs>
+      <line class="dline-soft" x1="34" y1="46" x2="34" y2="368"/>
+
+      <circle class="dbox-key" cx="34" cy="46" r="15"/>
+      <text class="dnum" x="34" y="51" text-anchor="middle">1</text>
+      <text class="dlbl" x="66" y="42">timeBeginPeriod(1)</text>
+      <text class="dsub" x="66" y="60">Windows only — before any TX pacing exists</text>
+
+      <circle class="dbox-key" cx="34" cy="110" r="15"/>
+      <text class="dnum" x="34" y="115" text-anchor="middle">2</text>
+      <text class="dlbl" x="66" y="106">Stamp the startup banner to disk</text>
+      <text class="dsub" x="66" y="124">before anything else can throw</text>
+
+      <circle class="dbox-key" cx="34" cy="174" r="15"/>
+      <text class="dnum" x="34" y="179" text-anchor="middle">3</text>
+      <text class="dlbl" x="66" y="170">Apply any pending database restore</text>
+      <text class="dsub" x="66" y="188">before DI constructs a single store</text>
+
+      <circle class="dbox" cx="34" cy="238" r="15"/>
+      <text class="dnum" x="34" y="243" text-anchor="middle">4</text>
+      <text class="dlbl" x="66" y="234">Build the host</text>
+      <text class="dsub" x="66" y="252">ValidateOnBuild + ValidateScopes · Kestrel listeners · CORS</text>
+
+      <circle class="dbox" cx="34" cy="302" r="15"/>
+      <text class="dnum" x="34" y="307" text-anchor="middle">5</text>
+      <text class="dlbl" x="66" y="298">Map endpoints, wire broadcasts</text>
+      <text class="dsub" x="66" y="316">access-token gate · loopback guard on plugin mutation</text>
+
+      <circle class="dbox" cx="34" cy="366" r="15"/>
+      <text class="dnum" x="34" y="371" text-anchor="middle">6</text>
+      <text class="dlbl" x="66" y="362">Start the plugin manager</text>
+      <text class="dsub" x="66" y="380">scan · validate manifests · activate under timeout</text>
+
+      <path class="dline-soft" d="M600 32 L618 32 L618 190 L600 190"/>
+      <text class="dsub" x="626" y="104">ordered against</text>
+      <text class="dsub" x="626" y="120">a specific failure</text>
+    </svg>
+    </div>
+    <figcaption><b>Steps 1–3 are defensive ordering.</b> The banner exists so that an absent <code>zeus-app.log</code> can distinguish "the launcher ran a stale cached engine" from "the new engine died before its first framework log line" — without it, both look identical to whoever is reading the bug report. The log sink is best-effort by design: an unwritable directory degrades to memory-only rather than blocking launch.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <p class="layer"><span>Surface</span></p>
+  <h2>Station protocol: 199 routes and 35 frame types</h2>
+  <div class="prose">
+    <p>The split between HTTP and WebSocket is not arbitrary. Anything with a request and a reply is a route; anything continuous is a frame with a one-byte type. The type byte is allocated in a deliberate pattern — <code>0x0x</code> for the core receive stream, <code>0x1x</code> for server-to-client telemetry, <code>0x2x</code> for client-to-server uplink and control, <code>0x3x</code> for feature streams added later.</p>
+  </div>
+
+  <div class="tblscroll">
+    <table>
+      <thead><tr><th class="mono">Byte</th><th>Frame</th><th>Direction</th><th>Carries</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">0x01</td><td>DisplayFrame</td><td>→ client</td><td>panadapter and waterfall rows</td></tr>
+        <tr><td class="mono">0x02</td><td>AudioPcm</td><td>→ client</td><td>48 kHz float mono</td></tr>
+        <tr><td class="mono">0x11–0x19</td><td>TX / RX meters</td><td>→ client</td><td>power, SWR, PA temperature, PureSignal</td></tr>
+        <tr><td class="mono">0x13</td><td>Alert</td><td>→ client</td><td>protection trips</td></tr>
+        <tr><td class="mono">0x20</td><td>MicPcm</td><td>← client</td><td>960 samples, 20 ms, float mono</td></tr>
+        <tr><td class="mono">0x21–0x25</td><td>stream requests</td><td>← client</td><td>refcounted opt-in for audio, mic, CW decode</td></tr>
+        <tr><td class="mono">0x30–0x3F</td><td>feature streams</td><td>→ client</td><td>CW decode, spots, chat, health, MIDI learn</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <p>The streaming hub carries one design decision worth stealing. Each client has a bounded backlog of 48 entries, and when it overflows the queue does not drop the oldest — it drops by kind. Display snapshots and meter telemetry are replaceable and go first; PCM is not and is protected. The comment records why the number is 48 and not 16: at 16 entries the queue held only about 350 ms of audio, and a rich 3D draw or a burst of VFO updates could keep a WebView from draining its socket for long enough to cause audible dropouts.</p>
+
+    <div class="note"><b>Security posture is loopback-first.</b> The engine binds <code>127.0.0.1</code> unless explicitly told otherwise, an optional access token gates every request, and plugin installation and removal are rejected with a 403 from any non-loopback address — regardless of token. LAN exposure requires both a flag and a generated certificate, and the argument parser refuses the combinations that would half-open it.</div>
+  </div>
+</section>
+
+<section>
+  <p class="layer"><span>State</span></p>
+  <h2>Everything the operator changed, in two files</h2>
+  <div class="prose">
+    <p>There is no configuration file. Around thirty typed stores — band memories, filter presets, antenna settings, CW keyer, PureSignal timing, audio devices, layouts, themes — all persist through LiteDB into <code>station-engine.db</code> under the platform application-data directory. Forty-four source files touch the database layer.</p>
+    <p>The QSO logbook is deliberately separate, in <code>zeus-logbook.db</code>. The reason is a lifecycle difference rather than a schema one: preferences fork per profile and are treated as disposable, and a developer resetting to a clean state should not lose their log alongside them. There is exactly one logbook per data directory, and it never forks.</p>
+  </div>
+
+  <dl class="kv">
+    <dt>station-engine.db</dt><dd>preferences and every typed store; forks per profile; safe to discard</dd>
+    <dt>zeus-logbook.db</dt><dd>QSO log; one per data directory; never forks</dd>
+    <dt>features/</dt><dd>plugin root — scanned at startup, activated under per-call timeout</dd>
+    <dt>logs/zeus-app.log</dt><dd>rolling mirror of the last ~4000 redacted log lines, survives a crash</dd>
+  </dl>
+</section>
+
+<section>
+  <p class="layer"><span>Extension</span></p>
+  <h2>Subsystems, plugins, and the native floor</h2>
+  <div class="prose">
+    <p>Eight subsystems live in their own directories inside the hosting library, and they are the clearest signal of what this engine is actually for. CAT (10 files) and TCI (14) exist to let other software drive the radio. A receive-side CW decoder (7 files) runs when a client asks for it and unwinds on disconnect. TDoA (10 files) — geodesy, a pair analyser, a solver — locates a transmitter by comparing arrival times across receivers. HF auto-tuner control, KiwiSDR integration, and support for an SPE Expert 1.5K Taurus amplifier round it out.</p>
+
+    <h3>Plugins</h3>
+    <p>The plugin host scans a root directory at startup and catalogues what it finds without loading assemblies. Activation is wrapped in try/catch with a per-call timeout, so a plugin that hangs in <code>InitializeAsync</code> fails alone. Manifests are validated against a declared ABI version, and the host scans for VST and Audio Unit components separately. Plugin identifiers are ordered in the audio chain and that order is itself broadcast to clients as a frame type.</p>
+
+    <h3>Native</h3>
+    <p>Underneath the C# sits 23 MB of vendored C, and the choices there are documented as compromises. WDSP — Warren Pratt's DSP engine, loaded by P/Invoke — is vendored at upstream 1.29 with a portability shim, because the reference implementation's own tree is MSVC-only and unsuitable as an upstream. Two noise-reduction paths are build flags with no-op stubs when disabled. RNNoise ships without a baked-in model, so that stage is inert until an operator installs weights. Prebuilt binaries are checked in for four runtime identifiers: <code>win-x64</code>, <code>win-arm64</code>, <code>linux-arm64</code> and <code>osx-arm64</code>.</p>
+  </div>
+</section>
+
+<section>
+  <p class="layer"><span>Provenance</span></p>
+  <h2>An independent implementation with a paper trail</h2>
+  <div class="prose">
+    <p>Every substantial source file opens with a 40-line header, and it is not boilerplate. The engine states plainly that it is an independent .NET reimplementation and <em>not</em> a fork, then names the projects whose behaviour informed it — Thetis for Protocol 1 and 2 framing, WDSP integration and transmit behaviour; pihpsdr and DeskHPSDR for Protocol 2, PureSignal and Saturn-class specifics — and credits fifteen individual contributors by name and callsign.</p>
+    <p>The licensing follows the same care, and it is layered rather than uniform. Most first-party code is GPL-2.0-or-later. A distribution without the ASIO host bridge is conveyed under GPL-3.0-or-later; a Windows distribution containing the Steinberg SDK-derived bridge is GPL-3.0-<em>only</em>, because that SDK's version&nbsp;3 option carries no "or later" grant. The amplifier support under <code>SpeTaurus/</code> is GPL-3.0-or-later on its own terms. Four separate documents carry the detail, one of them 23 KB of per-component attribution.</p>
+    <p>This repository is published as the complete corresponding source for the engine binary shipped with Zeus SDR, and each release tag matches the engine in the corresponding Zeus release.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Derived by reading the source at tag v2.0.9 (commit <code>db764e1</code>). Line counts are C# only and exclude the vendored native tree. Figures are hand-authored SVG. Behaviour described here is what the code says; runtime behaviour on specific hardware was not tested.</p>
+</footer>
+
+</div>

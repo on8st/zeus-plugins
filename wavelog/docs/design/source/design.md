@@ -2,7 +2,7 @@
 
 Push every logged QSO to a Wavelog instance. Design notes, not yet built.
 
-- Framework reference: [`plugins-how-to.md`](plugins-how-to.md)
+- Framework reference: [`docs/plugin-framework-how-to.md`](../../../../docs/plugin-framework-how-to.md)
 - Target: `wavelog.on8st.be` — Wavelog (Cloudlog fork) in Docker on the
   multihost, loopback `127.0.0.1:8086` behind Caddy
 - Plugin id: `on8st.wavelog`
