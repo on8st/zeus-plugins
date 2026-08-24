@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "on8st.wavelog",
+  "name": "Wavelog Logger",
+  "version": "0.1.0",
+  "author": "on8st",
+  "description": "Logbook backed by a local store, mirrored to a Wavelog instance.",
+  "license": "GPL-2.0-or-later",
+  "sdk": { "abi": 1, "minVersion": "1.4.0" },
+  "entrypoint": { "assembly": "Zeus.Plugin.Wavelog.dll" },
+  "capabilities": ["NetworkAccess"],
+  "permissions": { "network": true, "fileSystemRead": false, "fileSystemWrite": false }
+}
