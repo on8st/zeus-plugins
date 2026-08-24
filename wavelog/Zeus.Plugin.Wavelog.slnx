@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Zeus.Plugin.Wavelog/Zeus.Plugin.Wavelog.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zeus.Plugin.Wavelog.Tests/Zeus.Plugin.Wavelog.Tests.csproj" />
+  </Folder>
+</Solution>

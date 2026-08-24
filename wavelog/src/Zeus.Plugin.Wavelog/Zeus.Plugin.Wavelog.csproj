@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The host resolves the contracts from the default load context, so the
+         plugin must NOT ship its own copy: Private=false. See
+         docs/plugin-framework-how-to.md §10. -->
+    <ProjectReference Include="../../../../station-engine/Zeus.Plugins.Contracts/Zeus.Plugins.Contracts.csproj" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+</Project>
