@@ -37,13 +37,25 @@ public sealed class ZeusLogbookDb : IDisposable
     /// <summary>The reference's file name, read from its GPL assembly.</summary>
     public const string FileName = "zeus-logbook.db";
 
-    /// <summary>The reference's collection name, read from its GPL assembly.</summary>
-    public const string EntriesCollection = "entries";
+    /// <summary>
+    /// The reference's collection name — <c>logs</c>, confirmed by running the
+    /// shipped v1.1.0 plugin in an isolated engine and reading the file it
+    /// wrote.
+    ///
+    /// <para>This was <c>entries</c> for a while, taken from the assembly's
+    /// string table. <c>entries</c> is the plugin's HTTP <em>route</em>. The
+    /// mistake survived a full test suite because both sides of every test used
+    /// the same wrong name, and it would have shipped as a plugin that attached
+    /// to an empty collection and reported a healthy, permanently idle sync.
+    /// Hence <see cref="Verify"/>.</para>
+    /// </summary>
+    public const string EntriesCollection = "logs";
 
     /// <summary>Ours. The native logbook never looks at it.</summary>
     public const string SyncCollection = "wavelog_sync";
 
     private readonly LiteDatabase _db;
+    private readonly IReadOnlyList<string> _collectionNames;
     private readonly ILiteCollection<LogbookEntrySnapshot> _entries;
     private readonly ILiteCollection<SyncState> _sync;
 
@@ -66,9 +78,38 @@ public sealed class ZeusLogbookDb : IDisposable
         }, NewMapper());
 
         _entries = _db.GetCollection<LogbookEntrySnapshot>(EntriesCollection);
+        _collectionNames = _db.GetCollectionNames().ToList();
         _sync = _db.GetCollection<SyncState>(SyncCollection);
         _sync.EnsureIndex(s => s.DedupKey);
         _sync.EnsureIndex(s => s.Source);
+    }
+
+    /// <summary>
+    /// Check that we attached to something real, and say so loudly if not.
+    ///
+    /// <para>Getting the collection name wrong is the failure this class is most
+    /// exposed to, and it is silent by construction: LiteDB happily hands back
+    /// an empty collection for a name nothing ever wrote. The plugin then works
+    /// perfectly and syncs nothing, forever.</para>
+    ///
+    /// <para>So on startup, ask the file what it actually contains. If our
+    /// collection is missing while another one holds documents, that is a
+    /// rename in the reference and the operator needs to be told — not left
+    /// reading a contented log line.</para>
+    /// </summary>
+    public string? Verify()
+    {
+        if (_collectionNames.Contains(EntriesCollection, StringComparer.Ordinal))
+            return null;
+
+        var others = _collectionNames
+            .Where(n => !string.Equals(n, SyncCollection, StringComparison.Ordinal))
+            .ToList();
+
+        return others.Count == 0
+            ? null      // an empty logbook is not an error; the operator has not logged yet
+            : $"the logbook has no '{EntriesCollection}' collection — it has [{string.Join(", ", others)}]. " +
+              "The reference logbook plugin has probably renamed it; this sync will do nothing until that is corrected.";
     }
 
     // ---- reading the native log --------------------------------------------

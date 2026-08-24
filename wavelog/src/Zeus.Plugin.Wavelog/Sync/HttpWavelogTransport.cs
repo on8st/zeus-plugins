@@ -60,8 +60,14 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
         if (json?["status"]?.GetValue<string>() != "successful")
             return (WavelogOutcome.HttpStatus(400, json?["reason"]?.GetValue<string>() ?? "rejected"), null);
 
-        var last = json["lastfetchedid"]?.GetValue<int>() ?? fetchFromId;
-        var count = json["exported_qsos"]?.GetValue<int>() ?? 0;
+        // Wavelog is not consistent about JSON types here: a real instance
+        // returns "lastfetchedid":"1" as a *string* while "exported_qsos" is a
+        // number, and either can arrive in the other shape. GetValue<int>() on a
+        // string throws, which killed the whole sync loop on every cycle — a
+        // plugin that could never sync against any real server, while passing a
+        // full suite against a fake that returned tidy integers.
+        var last = ReadInt(json["lastfetchedid"]) ?? fetchFromId;
+        var count = ReadInt(json["exported_qsos"]) ?? 0;
         var adif = json["adif"]?.GetValue<string?>();
         return (WavelogOutcome.Success(), new PulledQsos(last, count, adif));
     }
@@ -69,8 +75,15 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
     public async Task<(WavelogOutcome, IReadOnlyList<StationProfile>?)> GetStationInfoAsync(
         WavelogConfig config, CancellationToken ct)
     {
-        var (outcome, json) = await SendAsync(
-            config.Endpoint("station_info"), new { key = config.ApiKey }, ct).ConfigureAwait(false);
+        // station_info is the odd one out. Every other endpoint reads its JSON
+        // body from php://input; this one is `function station_info($key = '')`,
+        // so CodeIgniter fills the key from a URL segment and a POSTed body is
+        // never looked at. Sending the body form gets a 401 that reads exactly
+        // like a bad key — which is how this survived a green suite against our
+        // own fake, and was only found by calling the real server.
+        var (outcome, json) = await GetAsync(
+            config.Endpoint("station_info") + "/" + Uri.EscapeDataString(config.ApiKey), ct)
+            .ConfigureAwait(false);
         if (!outcome.IsSuccess) return (outcome, null);
 
         if (json is not JsonArray arr)
@@ -113,39 +126,84 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
             : WavelogOutcome.HttpStatus(400, reason);
     }
 
+    /// <summary>
+    /// One place to decide what a Wavelog reply means, shared by both verbs.
+    /// </summary>
+    private static async Task<(WavelogOutcome, JsonNode?)> ReadAsync(
+        HttpResponseMessage response, CancellationToken ct)
+    {
+        var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+            return (WavelogOutcome.HttpStatus((int)response.StatusCode, Trim(text)), null);
+
+        try
+        {
+            var json = JsonNode.Parse(string.IsNullOrWhiteSpace(text) ? "null" : text);
+            if (json is null) return (WavelogOutcome.MalformedReply(Trim(text)), null);
+
+            // "failed" is Wavelog's own rejection shape, and it arrives with a 200.
+            if (json is JsonObject o && o["status"]?.GetValue<string>() == "failed")
+            {
+                var reason = o["reason"]?.GetValue<string>() ?? "rejected";
+                // Order matters: "API key does not have write permissions"
+                // contains "api key" but is a different problem with a
+                // different fix, so it must be classified first.
+                var status =
+                    reason.Contains("write permission", StringComparison.OrdinalIgnoreCase) ? 403 :
+                    reason.Contains("api key", StringComparison.OrdinalIgnoreCase) ? 401 : 400;
+                return (WavelogOutcome.HttpStatus(status, reason), null);
+            }
+            return (WavelogOutcome.Success(), json);
+        }
+        catch (JsonException)
+        {
+            return (WavelogOutcome.MalformedReply(Trim(text)), null);
+        }
+    }
+
+    /// <summary>
+    /// Read an integer that Wavelog may have sent as a number or as a string.
+    /// Never throws: a field we cannot make sense of is absent, not fatal.
+    /// </summary>
+    internal static int? ReadInt(JsonNode? node)
+    {
+        if (node is null) return null;
+        try
+        {
+            if (node.GetValueKind() == JsonValueKind.Number) return node.GetValue<int>();
+            var text = node.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : node.ToString();
+            return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<(WavelogOutcome, JsonNode?)> GetAsync(string url, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await http.GetAsync(url, ct).ConfigureAwait(false);
+            return await ReadAsync(response, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return (WavelogOutcome.Timeout(), null);
+        }
+        catch (HttpRequestException ex)
+        {
+            return (WavelogOutcome.NetworkError(ex.Message), null);
+        }
+    }
+
     private async Task<(WavelogOutcome, JsonNode?)> SendAsync(string url, object body, CancellationToken ct)
     {
         try
         {
             using var response = await http.PostAsJsonAsync(url, body, ct).ConfigureAwait(false);
-            var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-                return (WavelogOutcome.HttpStatus((int)response.StatusCode, Trim(text)), null);
-
-            try
-            {
-                var json = JsonNode.Parse(string.IsNullOrWhiteSpace(text) ? "null" : text);
-                if (json is null) return (WavelogOutcome.MalformedReply(Trim(text)), null);
-
-                // "failed" is Wavelog's own rejection shape, and it arrives with a 200.
-                if (json is JsonObject o && o["status"]?.GetValue<string>() == "failed")
-                {
-                    var reason = o["reason"]?.GetValue<string>() ?? "rejected";
-                    // Order matters: "API key does not have write permissions"
-                    // contains "api key" but is a different problem with a
-                    // different fix, so it must be classified first.
-                    var status =
-                        reason.Contains("write permission", StringComparison.OrdinalIgnoreCase) ? 403 :
-                        reason.Contains("api key", StringComparison.OrdinalIgnoreCase) ? 401 : 400;
-                    return (WavelogOutcome.HttpStatus(status, reason), null);
-                }
-                return (WavelogOutcome.Success(), json);
-            }
-            catch (JsonException)
-            {
-                return (WavelogOutcome.MalformedReply(Trim(text)), null);
-            }
+            return await ReadAsync(response, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

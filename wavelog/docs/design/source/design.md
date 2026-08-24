@@ -596,7 +596,50 @@ The panel is written with `React.createElement` rather than JSX, so the plugin
 needs no build step: no npm, no bundler, no lockfile. A packaging test asserts
 the registered id matches the manifest, because that failure mode is silent.
 
-## 12. Risks worth stating up front
+## 12. What running it actually proved
+
+The design above was written from reading: the engine source, the Wavelog PHP,
+and the reference plugin's assembly. Running it changed three things, and the
+pattern is worth more than the fixes.
+
+**Every one of them was invisible to a green unit suite**, because a unit suite
+can only check the code against my reading of the world — and the reading was
+what was wrong. `tools/zeus-harness/run.sh` exists to close that gap: a real
+engine, the real registry logbook plugin, verified by checksum, driven over HTTP.
+
+### The collection is `logs`, not `entries`
+
+`entries` is the reference plugin's HTTP *route*. I took it from the assembly's
+string table and called it verified. Both sides of every test used the same wrong
+name, so nothing failed. Shipped, it would have attached to an empty collection
+and reported a healthy, permanently idle sync — the exact silent failure §1 named
+as the design's main exposure, arriving by a route §1 did not anticipate.
+
+`ZeusLogbookDb.Verify()` is the answer: on startup, ask the file what collections
+it really has, and say so loudly if ours is absent while others hold documents.
+An empty logbook stays quiet — crying wolf there would train the operator to
+ignore the message that matters.
+
+### `station_info` takes its key in the URL
+
+It is `function station_info($key = '')`. CodeIgniter fills that from a path
+segment; a POSTed body is never read. Every *other* endpoint reads
+`php://input`. The body form returns a 401 whose text is indistinguishable from
+a bad key, so this would have been diagnosed as the operator's problem.
+
+### `lastfetchedid` is a string
+
+A real instance returns `"lastfetchedid":"1"` — quoted — while `exported_qsos`
+next to it is a number. And the same field comes back as an unquoted `0` from the
+confirmation sweep. `GetValue<int>()` threw, and the throw took out the whole
+sync loop, every cycle, against every real Wavelog in existence.
+
+The fake returned tidy integers because I wrote the fake from the same reading
+that produced the bug. A fake cannot falsify the belief it was built from — which
+is the general lesson, and the reason the harness is now part of the product
+rather than a thing done once.
+
+## 13. Risks worth stating up front
 
 **You are writing into a collection another plugin owns.** That is the deal the
 reframe makes, and it is a real exposure: if a future Zeus renames a field,
@@ -611,10 +654,12 @@ handles stop seeing each other with no error at all — the plugin reports a
 healthy empty queue while nothing syncs. `/status` reporting the logbook count is
 the cheap tell.
 
-**The fake encodes our reading of Wavelog, not Wavelog.** 151 passing tests prove
+**The fake encodes our reading of Wavelog, not Wavelog.** 158 passing tests prove
 the plugin does what this document says. They cannot prove this document read the
-API right. Only a run against a real instance does that, and it is a gate item,
-not a unit test.
+API right — §12 is three demonstrations of exactly that. The live harness is now
+the check that can, and the read path has passed it against a real instance. The
+**write** path has not: it has only been exercised through Wavelog's `dryrun`
+form, which validates auth and the endpoint but inserts nothing.
 
 **Confirmations are the one place we edit somebody else's record.** Deliberately
 the narrowest edit in the plugin — QSL and LoTW fields only, matched on the dedup

@@ -10,8 +10,9 @@ attaches to the same database file and moves contacts across.
 
 Design: [`docs/design/`](docs/design/) · Prompts: [`prompts/`](prompts/)
 
-**Status: built and tested against a local stand-in; never run inside Zeus.**
-See *Before you trust it*.
+**Status: runs inside a real station engine alongside the real Zeus Logbook
+plugin, and reads a live Wavelog. Not yet proven writing to a live Wavelog, and
+not yet run under Zeus Link.** See *Before you trust it*.
 
 ## What it does
 
@@ -67,7 +68,7 @@ Through the **Wavelog Sync** panel in the workspace tools. The same surface is
 also plain HTTP on the engine's own port, which is what the panel calls:
 
 ```sh
-BASE=http://127.0.0.1:6060/api/plugins/on8st.wavelog
+BASE=http://127.0.0.1:$PORT/api/plugins/on8st.wavelog   # the launcher picks the port
 
 curl $BASE/config                                     # key is never returned
 curl -X POST $BASE/config -H 'content-type: application/json' -d '{
@@ -84,15 +85,50 @@ curl -X POST $BASE/resync -d '{"dryRun":true}'        # report without writing
 curl -X POST $BASE/retry                              # requeue dead letters
 ```
 
+The engine's port is assigned by the Zeus Link launcher at start (it was 51032
+here), not fixed — read it from the running `StationEngine --port` argument.
+
 **Pull from many profiles, push to one.** A QSO logged under a station profile
 that is not in `pullStationIds` is invisible to the sync — permanently, not
 late. `GET /profiles` lists everything the key can see; put them all in unless
 you mean to exclude one.
 
+## Validating against a real Zeus
+
+`tools/zeus-harness/run.sh` stands the whole thing up from nothing: it builds the
+engine and this plugin, downloads the **real** `org.openhpsdr.logbook` v1.1.0
+from the Zeus registry and verifies its checksum, installs both into a throwaway
+sandbox, starts a real station engine, and drives the pair over HTTP.
+
+```sh
+./tools/zeus-harness/run.sh                     # offline, against the fake Wavelog
+./tools/zeus-harness/run.sh --live \           # read-only against a real instance
+  --station-profile 1                           # needs WAVELOG_URL + WAVELOG_KEY
+./tools/zeus-harness/run.sh --live --allow-write --station-profile N
+```
+
+It touches nothing installed. `ZEUS_PREFS_PATH` and `ZEUS_PLUGINS_PATH` move the
+data directory and plugin root into a sandbox — the engine's own source names
+dev, CI and tests as why those exist. **`--live` is read-only unless you also
+pass `--allow-write`**, and write goes to the profile you name, so it can never
+land in a real log by default.
+
+This harness is not a nicety. Three bugs that a green unit suite could not see
+were found the first time it ran:
+
+| | |
+|---|---|
+| **the collection was `logs`, not `entries`** | `entries` is the reference's HTTP *route*; the collection name was read out of its string table and guessed wrong. Both sides of every unit test used the same wrong name, so the suite stayed green. Shipped, it would have attached to an empty collection and reported a healthy, permanently idle sync |
+| **`station_info` takes its key in the URL** | it is `function station_info($key = '')`, so CodeIgniter fills it from a path segment and never reads a POST body. The body form returns a 401 that reads exactly like a bad key |
+| **`lastfetchedid` is a JSON string** | a real instance returns `"1"` where the fake returned `1`. `GetValue<int>()` threw, killing the sync loop on every cycle — against *every* real Wavelog, forever |
+
+The first is why `ZeusLogbookDb.Verify()` exists: it now says so loudly on
+startup rather than syncing nothing in silence.
+
 ## Testing without a live Wavelog
 
-Nothing in the test suite touches a real instance, and nothing touches a real
-Zeus. `tools/FakeWavelog` is a stand-in implementing the endpoints and semantics
+Nothing in the unit suite touches a real instance, and nothing touches a real
+Zeus. It is necessary and not sufficient — see above for what it cannot see. `tools/FakeWavelog` is a stand-in implementing the endpoints and semantics
 read out of Wavelog's own source — the same duplicate key, the same primary-key
 cursor, the same response shapes — so the plugin is driven end to end including
 its real HTTP client. `NativeLogbook` in the test project plays Zeus's own
@@ -100,7 +136,7 @@ logbook plugin: a separate LiteDB handle writing contract records into
 `zeus-logbook.db`, so every test starts from a log this plugin did not create.
 
 ```sh
-dotnet test                                    # 151 tests, no network, no radio
+dotnet test                                    # 158 tests, no network, no radio
 dotnet run --project tools/FakeWavelog -- 8099 # drive it by hand instead
 ```
 

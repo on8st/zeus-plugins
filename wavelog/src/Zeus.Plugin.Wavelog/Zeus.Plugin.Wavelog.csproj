@@ -29,4 +29,12 @@
     <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="ui/**/*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The tests pin behaviour that is internal on purpose: ReadInt exists to
+         absorb Wavelog's inconsistent JSON typing and has no business on the
+         public surface. -->
+    <InternalsVisibleTo Include="Zeus.Plugin.Wavelog.Tests" />
+  </ItemGroup>
+
 </Project>

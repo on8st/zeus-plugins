@@ -94,6 +94,9 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         _background = new CancellationTokenSource();
         StartBackground(_background.Token);
 
+        if (_logbook.Verify() is { } problem)
+            _log.LogError("wavelog: {Problem}", problem);
+
         _log.LogInformation("wavelog: attached to the native logbook ({Count} QSOs), configured={Configured}",
             _logbook.Count(), _config.IsUsable);
     }

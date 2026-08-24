@@ -622,10 +622,23 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 </section>
 
 <section>
-  <div class="sechead"><span class="secnum">§12</span><h2>Risks worth stating up front</h2></div>
+  <div class="sechead"><span class="secnum">§12</span><h2>What running it actually proved</h2></div>
+  <div class="prose">
+    <p>Everything above was written from reading — the engine source, the Wavelog PHP, the reference plugin's assembly. Running it changed three things, and the pattern matters more than the fixes: <strong>every one was invisible to a green unit suite</strong>, because a unit suite checks the code against my reading of the world, and the reading was what was wrong.</p>
+    <h3>The collection is <code>logs</code>, not <code>entries</code></h3>
+    <p><code>entries</code> is the reference plugin's HTTP <em>route</em>. I took it from the assembly's string table and called it verified. Both sides of every test used the same wrong name, so nothing failed — and shipped, it would have attached to an empty collection and reported a healthy, permanently idle sync. The exact silent failure §1 named as the main exposure, arriving by a route §1 did not anticipate. <code>ZeusLogbookDb.Verify()</code> is the answer.</p>
+    <h3><code>station_info</code> takes its key in the URL</h3>
+    <p>It is <code>function station_info($key = '')</code> — CodeIgniter fills that from a path segment and never reads a body, while every <em>other</em> endpoint reads <code>php://input</code>. The body form returns a 401 indistinguishable from a bad key, so it would have been diagnosed as the operator's problem.</p>
+    <h3><code>lastfetchedid</code> is a string</h3>
+    <p>A real instance returns <code>"lastfetchedid":"1"</code> — quoted — while <code>exported_qsos</code> beside it is a number, and the confirmation sweep returns the same field as an unquoted <code>0</code>. <code>GetValue&lt;int&gt;()</code> threw, and the throw took out the whole sync loop, every cycle, against every real Wavelog in existence. The fake returned tidy integers because the fake was written from the reading that produced the bug — <strong>a fake cannot falsify the belief it was built from</strong>. That is why the harness is part of the product now, not a thing done once.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><span class="secnum">§13</span><h2>Risks worth stating up front</h2></div>
   <div class="risk"><b>You are writing into a collection another plugin owns.</b> That is the deal the reframe makes, and it is a real exposure: if a future Zeus renames a field, changes the mapper or moves the file, this attaches to the wrong thing rather than failing loudly. The names and the document shape are asserted in tests, so a change is caught the moment the reference is re-read — <strong>but it has to be re-read</strong>. Treat a Zeus upgrade as a reason to run the suite, not just the plugin.</div>
   <div class="risk"><b>Both sides must open shared.</b> If a future Zeus switches to <code>Direct</code>, the two handles stop seeing each other with no error at all — the plugin reports a healthy empty queue while nothing syncs. <code>/status</code> reporting the logbook count is the cheap tell.</div>
-  <div class="risk"><b>The fake encodes our reading of Wavelog, not Wavelog.</b> 151 passing tests prove the plugin does what this document says. They cannot prove this document read the API right. Only a run against a real instance does that, and it is a gate item, not a unit test.</div>
+  <div class="risk"><b>The fake encodes our reading of Wavelog, not Wavelog.</b> 158 passing tests prove the plugin does what this document says. They cannot prove this document read the API right — §12 is three demonstrations of exactly that. The read path has now passed the live harness against a real instance; the <b>write</b> path has not, having only been exercised through Wavelog's <code>dryrun</code> form, which validates auth and the endpoint but inserts nothing.</div>
   <div class="risk"><b>Confirmations are the one place we edit somebody else’s record.</b> Deliberately the narrowest edit in the plugin — QSL and LoTW fields only, matched on the dedup key. Worth re-reading if it ever grows.</div>
 </section>
 

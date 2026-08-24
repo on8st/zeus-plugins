@@ -35,11 +35,15 @@ public sealed class ZeusLogbookDbTests : IDisposable
     [Fact]
     public void We_attach_to_the_file_and_collection_the_reference_uses()
     {
-        // Both names were read from the reference plugin's GPL assembly. Getting
-        // either wrong produces a plugin that works perfectly against an empty
-        // database of its own and never sees a single QSO.
+        // These two names are pinned by what the shipped v1.1.0 plugin actually
+        // wrote when it was run in an isolated engine — not by reading its
+        // string table, which is how the collection came out as "entries" (the
+        // plugin's HTTP route) and stayed wrong through a green suite.
+        //
+        // A unit test cannot re-derive these; only tests/integration can, and
+        // does. This one exists so a careless edit has to be deliberate.
         Assert.Equal("zeus-logbook.db", ZeusLogbookDb.FileName);
-        Assert.Equal("entries", ZeusLogbookDb.EntriesCollection);
+        Assert.Equal("logs", ZeusLogbookDb.EntriesCollection);
 
         using (var zeus = Zeus()) zeus.Log();
         Assert.True(File.Exists(Path.Combine(_dir, "zeus-logbook.db")));
@@ -77,6 +81,44 @@ public sealed class ZeusLogbookDbTests : IDisposable
         var found = db.ById(id)!;
         Assert.Equal(DateTimeKind.Utc, found.QsoDateTimeUtc.Kind);
         Assert.Equal(when, found.QsoDateTimeUtc);
+    }
+
+    [Fact]
+    public void A_renamed_collection_is_reported_rather_than_silently_empty()
+    {
+        // The failure this class is most exposed to, and it is silent by
+        // construction: LiteDB hands back an empty collection for any name.
+        // The plugin then works perfectly and syncs nothing, forever.
+        using (var wrong = new LiteDB.LiteDatabase(new LiteDB.ConnectionString
+        {
+            Filename = Path.Combine(_dir, ZeusLogbookDb.FileName),
+            Connection = LiteDB.ConnectionType.Shared,
+        }, new LiteDB.BsonMapper()))
+        {
+            wrong.GetCollection("somethingelse").Insert(new LiteDB.BsonDocument { ["x"] = 1 });
+        }
+
+        using var db = Attach();
+        var problem = db.Verify();
+        Assert.NotNull(problem);
+        Assert.Contains("somethingelse", problem);
+    }
+
+    [Fact]
+    public void An_empty_logbook_is_not_reported_as_a_problem()
+    {
+        // The operator simply has not logged anything yet. Crying wolf here
+        // would train them to ignore the message that matters.
+        using var db = Attach();
+        Assert.Null(db.Verify());
+    }
+
+    [Fact]
+    public void A_logbook_with_qsos_verifies_clean()
+    {
+        using (var zeus = Zeus()) zeus.Log();
+        using var db = Attach();
+        Assert.Null(db.Verify());
     }
 
     // ---- noticing new work --------------------------------------------------

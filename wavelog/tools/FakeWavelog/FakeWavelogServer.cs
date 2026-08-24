@@ -124,6 +124,20 @@ public sealed class FakeWavelogServer : IDisposable
         if (ForceStatus != 0) { Reply(ctx, ForceStatus, ForceBody ?? "{\"status\":\"failed\"}"); return; }
         if (ForceBody is not null) { Reply(ctx, 200, ForceBody); return; }
 
+        // station_info is `function station_info($key = '')` in Wavelog's own
+        // controller, so CodeIgniter fills the key from a URL segment and never
+        // looks at a body. Every other endpoint reads php://input. The fake got
+        // this wrong for a while and validated the wrong reading of the API
+        // perfectly, so the shape is reproduced here deliberately.
+        const string StationInfoPath = "/index.php/api/station_info";
+        if (path.StartsWith(StationInfoPath, StringComparison.Ordinal))
+        {
+            var segment = path[StationInfoPath.Length..].TrimStart('/');
+            if (segment != ApiKey) { Reply(ctx, 401, Fail("missing or invalid api key")); return; }
+            StationInfo(ctx);
+            return;
+        }
+
         JsonNode? json = null;
         try { json = JsonNode.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); } catch { }
         var key = json?["key"]?.GetValue<string>();
@@ -134,7 +148,6 @@ public sealed class FakeWavelogServer : IDisposable
         {
             case "/index.php/api/qso": PostQso(ctx, json!); return;
             case "/index.php/api/get_contacts_adif": GetContacts(ctx, json!); return;
-            case "/index.php/api/station_info": StationInfo(ctx); return;
             case "/index.php/api/radio": PostRadio(ctx, json!); return;
             default: Reply(ctx, 404, Fail("no such endpoint")); return;
         }
@@ -199,7 +212,7 @@ public sealed class FakeWavelogServer : IDisposable
         {
             Reply(ctx, 200,
                 $"{{\"status\":\"successful\",\"message\":\"No new QSOs available.\"," +
-                $"\"lastfetchedid\":{from},\"exported_qsos\":0,\"adif\":null}}");
+                $"\"lastfetchedid\":\"{from}\",\"exported_qsos\":0,\"adif\":null}}");
             return;
         }
 
@@ -207,11 +220,14 @@ public sealed class FakeWavelogServer : IDisposable
         var adif = new StringBuilder("<ADIF_VER:5>3.1.4<EOH>\n");
         foreach (var r in selected) adif.Append(r.Export()).Append('\n');
 
+        // lastfetchedid is a STRING on a real instance while exported_qsos is a
+        // number. Reproduced exactly: the tidy all-integers version this used to
+        // send is what let a fatal parse bug pass a full suite.
         Reply(ctx, 200, JsonSerializer.Serialize(new
         {
             status = "successful",
             message = "Export successful",
-            lastfetchedid = last,
+            lastfetchedid = last.ToString(System.Globalization.CultureInfo.InvariantCulture),
             exported_qsos = selected.Count,
             adif = adif.ToString(),
         }));
