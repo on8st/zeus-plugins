@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Zeus.Plugin.Wavelog/Zeus.Plugin.Wavelog.csproj" />
+    <ProjectReference Include="../../tools/FakeWavelog/FakeWavelog.csproj" />
     <ProjectReference Include="../../../../station-engine/Zeus.Plugins.Contracts/Zeus.Plugins.Contracts.csproj" />
   </ItemGroup>
 </Project>

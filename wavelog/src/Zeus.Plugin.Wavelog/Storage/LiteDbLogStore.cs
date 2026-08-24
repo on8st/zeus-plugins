@@ -325,6 +325,112 @@ public sealed class LiteDbLogStore : ILogStore, IDisposable
         return new LogbookImportResult(total, imported, duplicates, skipped, errors);
     }
 
+    // ---- push bookkeeping ---------------------------------------------------
+
+    public void MarkPushed(string qsoId)
+    {
+        var row = _qsos.FindById(qsoId);
+        if (row is null) return;
+        row.WavelogUploadedUtc = DateTime.UtcNow;
+        row.WavelogError = null;
+        _qsos.Update(row);
+    }
+
+    public void MarkPushFailed(string qsoId, string error)
+    {
+        var row = _qsos.FindById(qsoId);
+        if (row is null) return;
+        row.WavelogError = error;
+        _qsos.Update(row);
+    }
+
+    // ---- reconciliation, used by the sync -----------------------------------
+
+    /// <summary>The dedup key of a parsed ADIF record, or null if it has no callsign.</summary>
+    public string? DedupKeyOf(IReadOnlyDictionary<string, string> record)
+    {
+        try
+        {
+            var entry = AdifImport.ToNewEntry(record);
+            return StoredQso.MakeDedupKey(
+                entry.Callsign, Normalise(entry.QsoDateTimeUtc ?? DateTime.UtcNow),
+                entry.Band, entry.Mode);
+        }
+        catch (AdifFormatException) { return null; }
+    }
+
+    public bool HasDedupKey(string key) => _qsos.Exists(q => q.DedupKey == key);
+
+    /// <summary>
+    /// QSOs held here that Wavelog did not report. Rows that came <em>from</em>
+    /// Wavelog are excluded: pushing those back is the loop this design exists
+    /// to prevent.
+    /// </summary>
+    public IReadOnlyList<LogbookEntrySnapshot> LocalOnly(IReadOnlySet<string> wavelogKeys)
+        => _qsos.FindAll()
+            .Where(q => q.Source != QsoSource.Wavelog)
+            .Where(q => !wavelogKeys.Contains(q.DedupKey))
+            .Select(q => q.ToSnapshot())
+            .ToList();
+
+    /// <summary>
+    /// Apply QSL and LoTW status from Wavelog onto QSOs already held, matched on
+    /// the dedup key. Confirmation fields are Wavelog's to own — it is where
+    /// they arrive — so this never touches anything else about the contact.
+    /// </summary>
+    public int ApplyConfirmations(string adifText)
+    {
+        var updated = 0;
+        IReadOnlyList<IReadOnlyDictionary<string, string>> records;
+        try { records = AdifParser.Parse(adifText); }
+        catch (AdifFormatException) { return 0; }
+
+        foreach (var record in records)
+        {
+            var key = DedupKeyOf(record);
+            if (key is null) continue;
+            var row = _qsos.Find(q => q.DedupKey == key).FirstOrDefault();
+            if (row is null) continue;
+
+            var changed = false;
+            changed |= SetIfPresent(record, "QSL_RCVD", v => { row.QslRcvd = v; });
+            changed |= SetIfPresent(record, "QSL_SENT", v => { row.QslSent = v; });
+            changed |= SetDateIfPresent(record, "LOTW_QSLRDATE", v => { row.LotwQslRcvdUtc = v; });
+            changed |= SetDateIfPresent(record, "LOTW_QSLSDATE", v => { row.LotwQslSentUtc = v; });
+            changed |= SetDateIfPresent(record, "QSLRDATE", v => { row.QslRcvdDate = v; });
+            changed |= SetDateIfPresent(record, "QSLSDATE", v => { row.QslSentDate = v; });
+            if (record.TryGetValue("LOTW_QSL_RCVD", out var lotw) &&
+                lotw.Trim().Equals("Y", StringComparison.OrdinalIgnoreCase) &&
+                row.LotwQslRcvdUtc is null)
+            {
+                row.LotwQslRcvdUtc = DateTime.UtcNow;
+                changed = true;
+            }
+
+            if (!changed) continue;
+            _qsos.Update(row);
+            updated++;
+        }
+        return updated;
+    }
+
+    private static bool SetIfPresent(IReadOnlyDictionary<string, string> r, string key, Action<string> set)
+    {
+        if (!r.TryGetValue(key, out var v) || string.IsNullOrWhiteSpace(v)) return false;
+        set(v.Trim());
+        return true;
+    }
+
+    private static bool SetDateIfPresent(IReadOnlyDictionary<string, string> r, string key, Action<DateTime> set)
+    {
+        if (!r.TryGetValue(key, out var v) || string.IsNullOrWhiteSpace(v)) return false;
+        if (!DateTime.TryParseExact(v.Trim(), "yyyyMMdd", CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+            return false;
+        set(parsed);
+        return true;
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     /// <summary>Everything is stored as UTC; a local value is converted, not relabelled.</summary>
