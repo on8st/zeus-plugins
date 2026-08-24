@@ -88,10 +88,18 @@ curl -X POST $BASE/retry                              # requeue dead letters
 The engine's port is assigned by the Zeus Link launcher at start (it was 51032
 here), not fixed — read it from the running `StationEngine --port` argument.
 
-**Pull from many profiles, push to one.** A QSO logged under a station profile
+**Pull from many locations, push to one.** A QSO logged under a station location
 that is not in `pullStationIds` is invisible to the sync — permanently, not
 late. `GET /profiles` lists everything the key can see; put them all in unless
 you mean to exclude one.
+
+**Locations, not logbooks.** Wavelog has two things and they are easy to swap.
+A **Station Location** has the `station_id` the API writes to; a **Station
+Logbook** is a *grouping* of locations. A QSO goes to a location and then
+appears in whichever logbook that location is linked to. Neither the v1 nor the
+v2 API exposes any way to list logbooks, so if a QSO is not where you expect,
+the question to ask is always which *location* it was written to. The panel uses
+Wavelog's own wording for this reason.
 
 ## Validating against a real Zeus
 

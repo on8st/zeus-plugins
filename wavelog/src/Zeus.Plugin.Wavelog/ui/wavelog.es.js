@@ -141,7 +141,7 @@ function WavelogPanel({ api }) {
     try {
       const res = await api.callBackend('GET', '/profiles');
       if (res.ok) setProfiles(await res.json());
-      else setMessage({ bad: true, text: (await res.json().catch(() => ({}))).error || 'could not list profiles' });
+      else setMessage({ bad: true, text: (await res.json().catch(() => ({}))).error || 'could not list locations' });
     } finally { setBusy(false); }
   }, [api]);
 
@@ -181,11 +181,13 @@ function WavelogPanel({ api }) {
     }),
 
     // ---- station profiles
-    h('div', { style: css.section }, 'station profiles'),
+    h('div', { style: css.section }, 'station locations'),
 
     Field({
-      label: 'push to profile',
-      hint: 'new QSOs are written to this one profile',
+      label: 'push to location',
+      hint: 'new QSOs are written to this one station location. Wavelog calls '
+          + 'these Station Locations; a Logbook is a grouping of them, and is not '
+          + 'something the API can be pointed at.',
       children: h('input', {
         style: { ...css.input, maxWidth: 90 }, type: 'number', min: 1,
         value: config.stationProfileId ?? 1,
@@ -194,10 +196,10 @@ function WavelogPanel({ api }) {
     }),
 
     Field({
-      label: 'pull from profiles',
-      hint: 'comma separated. A QSO logged under a profile that is not listed here '
-          + 'is invisible to the sync — permanently, not late. List them all unless '
-          + 'you mean to exclude one.',
+      label: 'pull from locations',
+      hint: 'comma separated. A QSO logged under a station location that is not '
+          + 'listed here is invisible to the sync — permanently, not late. List '
+          + 'them all unless you mean to exclude one.',
       children: h('input', {
         style: css.input, value: pullIds, placeholder: '1, 2',
         onChange: (e) => setConfig({
@@ -210,7 +212,7 @@ function WavelogPanel({ api }) {
 
     h('div', { style: css.row },
       h('button', { style: css.button, disabled: busy, onClick: fetchProfiles },
-        'list profiles this key can reach'),
+        'list locations this key can reach'),
       profiles
         ? h('span', { style: css.note },
             profiles.map((p) => `${p.id} = ${p.name}`).join(' · '))
@@ -250,7 +252,7 @@ function WavelogPanel({ api }) {
       }, 'save'),
       h('button', {
         style: css.button, disabled: busy,
-        onClick: () => act('/test', null, (j) => `reached Wavelog · ${j.profiles} profile(s)`),
+        onClick: () => act('/test', null, (j) => `reached Wavelog · ${j.profiles} location(s)`),
       }, 'test connection'),
       message
         ? h('span', { style: message.bad ? css.bad : css.good }, message.text)
@@ -269,7 +271,7 @@ function WavelogPanel({ api }) {
           h('div', null, `pull cursor at ${status.cursor}`),
           // Naming the profiles turns "why isn't that contact here" into a
           // glance rather than an investigation.
-          h('div', null, `pulling from profile(s) ${(status.pullStationIds || []).join(', ') || '—'}`
+          h('div', null, `pulling from location(s) ${(status.pullStationIds || []).join(', ') || '—'}`
                        + ` · pushing to ${status.pushStationProfileId}`),
           status.lastError
             ? h('div', { style: css.bad }, `last error: ${status.lastError}`)
@@ -283,7 +285,7 @@ function WavelogPanel({ api }) {
             onClick: () => act('/retry', null, (j) => `requeued ${j.requeued}`),
           }, `retry ${status.failed} failed`),
           h('span', { style: css.note },
-            'fix the cause first — a wrong key or profile will just fail again'))
+            'fix the cause first — a wrong key or location will just fail again'))
       : null,
 
     // ---- repair
