@@ -37,6 +37,24 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
     private CancellationTokenSource? _background;
 
     private volatile WavelogConfig _config = new();
+    private DateTime _configReadUtc = DateTime.MinValue;
+    private readonly SemaphoreSlim _configGate = new(1, 1);
+
+    /// <summary>
+    /// How long a cached copy of the configuration is trusted.
+    ///
+    /// <para>Zeus owns the settings store — one LiteDB collection per plugin —
+    /// and it can rewrite a plugin's whole collection without telling it: that
+    /// is how the profile snapshot/restore system works. <c>PluginSettingsChanged</c>
+    /// exists but sits on the host's own store and is not exposed on
+    /// <see cref="IPluginContext"/>, so a plugin cannot subscribe to it.</para>
+    ///
+    /// <para>With no push available, holding our copy as authoritative would
+    /// mean a profile restore silently leaves the plugin talking to the old
+    /// instance with the old key until the next restart. So the store stays the
+    /// single source of truth and this is only a short-lived cache.</para>
+    /// </summary>
+    public static readonly TimeSpan ConfigTtl = TimeSpan.FromSeconds(30);
 
     private LiteDbLogStore Store => _store
         ?? throw new InvalidOperationException("the plugin has not been initialised");
@@ -61,15 +79,16 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
 
         _config = await LoadConfigAsync(ct).ConfigureAwait(false);
+        _configReadUtc = DateTime.UtcNow;
 
         var transport = new HttpWavelogTransport(_http);
-        _sync = new WavelogSyncService(_store, _outbox, transport, () => _config, _cursors, _log);
-        _pump = new OutboxPump(_outbox, transport, () => _config, RetryPolicy.Default, _log);
+        _sync = new WavelogSyncService(_store, _outbox, transport, CurrentConfig, _cursors, _log);
+        _pump = new OutboxPump(_outbox, transport, CurrentConfig, RetryPolicy.Default, _log);
         _pump.Delivered += id => _store?.MarkPushed(id);
         _pump.DeadLettered += (id, reason) => _store?.MarkPushFailed(id, reason);
 
         if (context.Radio is { } radio)
-            _radio = new RadioStatePublisher(radio, transport, () => _config, SystemClock.Instance, "Zeus", _log);
+            _radio = new RadioStatePublisher(radio, transport, CurrentConfig, SystemClock.Instance, "Zeus", _log);
 
         _background = new CancellationTokenSource();
         StartBackground(_background.Token);
@@ -124,6 +143,25 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
     }
 
     // ---- configuration ------------------------------------------------------
+
+    /// <summary>
+    /// The configuration, re-read from Zeus's store when the cache has aged out.
+    /// Synchronous because every caller is a hot-ish loop; the read is a single
+    /// indexed LiteDB lookup and happens at most twice a minute.
+    /// </summary>
+    private WavelogConfig CurrentConfig()
+    {
+        if (DateTime.UtcNow - _configReadUtc <= ConfigTtl) return _config;
+        if (!_configGate.Wait(0)) return _config;          // another read in flight
+        try
+        {
+            _config = LoadConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
+            _configReadUtc = DateTime.UtcNow;
+        }
+        catch (Exception ex) { _log?.LogDebug(ex, "wavelog: settings re-read failed; keeping the last value"); }
+        finally { _configGate.Release(); }
+        return _config;
+    }
 
     private async Task<WavelogConfig> LoadConfigAsync(CancellationToken ct)
     {
@@ -181,7 +219,9 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
             apiKeySet = !string.IsNullOrWhiteSpace(_config.ApiKey),
         }));
 
-        endpoints.MapPut("config", async (JsonNode body, CancellationToken ct) =>
+        // Both verbs: the GPL sample panels only ever use GET and POST through
+        // api.callBackend, so PUT alone would leave the panel unable to save.
+        endpoints.MapMethods("config", ["PUT", "POST"], async (JsonNode body, CancellationToken ct) =>
         {
             var url = body["baseUrl"]?.GetValue<string>()?.Trim() ?? _config.BaseUrl;
             if (!string.IsNullOrWhiteSpace(url) &&
@@ -206,13 +246,14 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
             };
 
             await _ctx!.Settings.SetAsync(ConfigKey, StoredConfig.From(_config), ct).ConfigureAwait(false);
+            _configReadUtc = DateTime.UtcNow;      // our own write is already reflected
             return Results.Ok(new { ok = true });
         });
 
         endpoints.MapGet("profiles", async (CancellationToken ct) =>
         {
             var (outcome, profiles) = await new HttpWavelogTransport(_http!)
-                .GetStationInfoAsync(_config, ct).ConfigureAwait(false);
+                .GetStationInfoAsync(CurrentConfig(), ct).ConfigureAwait(false);
             return outcome.IsSuccess
                 ? Results.Ok(profiles!.Select(p => new { id = p.Id, name = p.Name }))
                 : Results.BadRequest(new { error = outcome.Detail ?? outcome.Kind.ToString() });
@@ -220,7 +261,7 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
 
         endpoints.MapGet("status", () => Results.Ok(new
         {
-            configured = _config.IsUsable,
+            configured = CurrentConfig().IsUsable,
             pending = _outbox?.PendingCount ?? 0,
             failed = _outbox?.DeadLetterCount ?? 0,
             lastError = _outbox?.DeadLettered().LastOrDefault()?.LastError,
@@ -234,7 +275,7 @@ public sealed class WavelogLogbookPlugin : IZeusPlugin, ILogbookPluginV2, IBacke
         endpoints.MapPost("test", async (CancellationToken ct) =>
         {
             var (outcome, profiles) = await new HttpWavelogTransport(_http!)
-                .GetStationInfoAsync(_config, ct).ConfigureAwait(false);
+                .GetStationInfoAsync(CurrentConfig(), ct).ConfigureAwait(false);
             return outcome.IsSuccess
                 ? Results.Ok(new { ok = true, profiles = profiles!.Count })
                 : Results.BadRequest(new { ok = false, error = outcome.Detail ?? outcome.Kind.ToString() });

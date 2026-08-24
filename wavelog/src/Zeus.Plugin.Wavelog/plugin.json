@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "on8st.wavelog",
+  "name": "Wavelog Logger",
+  "version": "0.1.0",
+  "author": "on8st",
+  "description": "Logbook backed by a local store, mirrored to a Wavelog instance. Pushes every QSO, pulls contacts logged by other apps, sweeps back LoTW and QSL confirmations, and can publish live rig state.",
+  "homepage": "https://github.com/on8st/zeus-plugins",
+  "license": "GPL-2.0-or-later",
+  "sdk": {
+    "abi": 1,
+    "minVersion": "1.4.0"
+  },
+  "entrypoint": {
+    "assembly": "Zeus.Plugin.Wavelog.dll",
+    "type": "Zeus.Plugin.Wavelog.WavelogLogbookPlugin"
+  },
+  "capabilities": [
+    "PersistSettings",
+    "NetworkAccess",
+    "ReadRadioState"
+  ],
+  "permissions": {
+    "network": true,
+    "fileSystemRead": false,
+    "fileSystemWrite": false
+  },
+  "ui": {
+    "modules": [
+      "ui/wavelog.es.js"
+    ],
+    "panels": [
+      {
+        "id": "wavelog.config",
+        "title": "Wavelog",
+        "icon": "Upload",
+        "slot": "workspace.tools",
+        "category": "tools"
+      }
+    ]
+  }
+}
