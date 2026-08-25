@@ -26,7 +26,13 @@ export function project(lon, lat) {
   return [x, y];
 }
 
-/** Coastline as SVG path data, computed once. */
+/**
+ * Coastline as SVG path data, computed once.
+ *
+ * Each arc is closed so the land can be filled. Natural Earth's land arcs are
+ * already rings, and an unclosed hairline outline is what made the first version
+ * of this map look like a diagram rather than a map.
+ */
 export const COAST_PATH = COASTLINE.map((arc) => {
   let d = '';
   let prevX = null;
@@ -38,8 +44,24 @@ export const COAST_PATH = COASTLINE.map((arc) => {
     else d += `${d ? ' L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
     prevX = x;
   }
-  return d;
+  return d + ' Z';
 }).join(' ');
+
+/** Meridians and parallels every 30°, for a sense of scale and projection. */
+export const GRATICULE = (() => {
+  const parts = [];
+  for (let lon = -180; lon <= 180; lon += 30) {
+    const [x0, y0] = project(lon, LAT_MAX);
+    const [x1, y1] = project(lon, LAT_MIN);
+    parts.push(`M${x0.toFixed(1)} ${y0.toFixed(1)} L${x1.toFixed(1)} ${y1.toFixed(1)}`);
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const [x0, y0] = project(-180, lat);
+    const [x1, y1] = project(180, lat);
+    parts.push(`M${x0.toFixed(1)} ${y0.toFixed(1)} L${x1.toFixed(1)} ${y1.toFixed(1)}`);
+  }
+  return parts.join(' ');
+})();
 
 /**
  * A Maidenhead locator to a position, at the centre of the square.

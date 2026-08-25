@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Regenerate ui/vendor/coastline.js from Natural Earth 1:110m land.
+// Regenerate ui/vendor/coastline.js from Natural Earth 1:50m land.
 //
 // Run when a finer or coarser map is wanted. Everything happens here so the
 // panel ships plain arrays and needs no TopoJSON decoder:
@@ -11,8 +11,8 @@
 // invisible at panel size.
 import { writeFileSync } from 'node:fs';
 
-const TOL = Number(process.argv[2] ?? 0.55);
-const SRC = 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json';
+const TOL = Number(process.argv[2] ?? 0.30);
+const SRC = 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-50m.json';
 
 const topo = await (await fetch(SRC)).json();
 const { scale: [sx, sy], translate: [dx, dy] } = topo.transform;
@@ -55,7 +55,7 @@ const arcs = topo.arcs.map(decode)
 const header = `// SPDX-License-Identifier: GPL-2.0-or-later
 //
 // World coastline, [[[lon,lat],...],...] in degrees. GENERATED — do not edit.
-// Natural Earth 1:110m land (public domain) via world-atlas (ISC), decoded from
+// Natural Earth 1:50m land (public domain) via world-atlas (ISC), decoded from
 // TopoJSON and simplified at ${TOL}° by tools/coastline/build.mjs.
 export const COASTLINE = `;
 

@@ -16,7 +16,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 // UMD, imported for its side effect: in an ES module it takes the globalThis
 // branch and registers itself. Vendored — see vendor/README.md.
 import './vendor/opus-decoder.min.js';
-import { MAP_W, MAP_H, COAST_PATH, project, deriveHome, greatCirclePath, gridToLatLon } from './map.js';
+import { MAP_W, MAP_H, COAST_PATH, GRATICULE, project, deriveHome, greatCirclePath, gridToLatLon } from './map.js';
 
 const h = React.createElement;
 
@@ -165,7 +165,7 @@ function Comparison({ takes, hosts }) {
 // is getting out is visible without reading a number. Nothing here is clickable
 // yet beyond selecting a receiver to listen to — the tiles remain the place to
 // operate, and the map is the place to see.
-function ReceiverMap({ home, receivers, readings, live, onLive }) {
+function ReceiverMap({ home, receivers, readings, live, onLive, onNotConnected }) {
   if (!home) {
     return h('div', { style: css.note },
       'No position yet — the map needs at least one receiver with a known '
@@ -188,40 +188,62 @@ function ReceiverMap({ home, receivers, readings, live, onLive }) {
       viewBox: `0 0 ${MAP_W} ${MAP_H}`,
       role: 'img',
       'aria-label': `World map of ${placed.length} remote receivers, with a great-circle path from the operator to each.`,
-      style: { width: '100%', height: 'auto', display: 'block',
-               background: 'var(--bg-2, #16181d)', borderRadius: 3 },
+      style: { width: '100%', height: 'auto', display: 'block', borderRadius: 3 },
     },
+      // Sea, land, then grid. Filled land reads as a map; the hairline outline
+      // the first version drew read as a diagram.
+      h('rect', { x: 0, y: 0, width: MAP_W, height: MAP_H, fill: 'var(--bg-2, #10161c)' }),
       h('path', {
         d: COAST_PATH,
+        fill: 'var(--bg-3, #232a31)',
+        stroke: 'var(--fg-3, #5a5e66)',
+        strokeWidth: 0.4,
+        fillRule: 'evenodd',
+        opacity: 0.95,
+      }),
+      h('path', {
+        d: GRATICULE,
         fill: 'none',
         stroke: 'var(--fg-3, #5a5e66)',
-        strokeWidth: 0.7,
-        opacity: 0.75,
+        strokeWidth: 0.3,
+        opacity: 0.35,
       }),
 
       // Paths first, so the receiver dots sit on top of them.
-      placed.map((r) => h('path', {
-        key: 'p' + r.host,
-        d: greatCirclePath(home, { lat: r.lat, lon: r.lon }),
-        fill: 'none',
-        stroke: colour(snrOf(r.host)),
-        strokeWidth: width(snrOf(r.host)),
-        opacity: live === r.host ? 1 : 0.65,
-      })),
+      placed.map((r) => {
+        const open = readings[r.host]?.state === 'open';
+        return h('path', {
+          key: 'p' + r.host,
+          d: greatCirclePath(home, { lat: r.lat, lon: r.lon }),
+          fill: 'none',
+          stroke: open ? colour(snrOf(r.host)) : 'var(--fg-3, #5a5e66)',
+          strokeWidth: open ? width(snrOf(r.host)) : 0.5,
+          strokeDasharray: open ? undefined : '3 4',
+          opacity: live === r.host ? 1 : open ? 0.7 : 0.35,
+        });
+      }),
 
       placed.map((r) => {
         const [x, y] = project(r.lon, r.lat);
         const snr = snrOf(r.host);
+        // Whether this receiver is actually connected. On the tiles the live
+        // button only existed once it was, which made the state obvious; a dot
+        // on a map has to say so itself, or clicking one that is not connected
+        // does nothing and looks broken.
+        const open = readings[r.host]?.state === 'open';
         return h('g', {
           key: r.host,
           style: { cursor: 'pointer' },
-          onClick: () => onLive(live === r.host ? null : r.host),
+          onClick: () => (open ? onLive(live === r.host ? null : r.host) : onNotConnected()),
         },
           h('circle', {
             cx: x, cy: y,
             r: live === r.host ? 6 : 4,
-            fill: colour(snr),
-            stroke: live === r.host ? 'var(--fg, #e6e8ea)' : 'none',
+            // Hollow until connected: an outline reads as "there, but not
+            // listening", which is exactly what it is.
+            fill: open ? colour(snr) : 'none',
+            stroke: live === r.host ? 'var(--fg, #e6e8ea)'
+              : open ? 'none' : 'var(--fg-3, #5a5e66)',
             strokeWidth: 1.5,
           }),
           h('text', {
@@ -726,6 +748,13 @@ function UbersdrPanel({ api }) {
              + 'kilometres out.',
       })),
 
+    view === 'map' && !listening
+      ? h('div', { style: css.note },
+          'Dotted lines and hollow dots are receivers that are not connected. '
+          + 'Press \u201clisten on ' + wall.length + ' receivers\u201d to start, '
+          + 'then click any dot to hear that one.')
+      : null,
+
     view === 'map'
       ? h(ReceiverMap, {
           home: gridToLatLon(homeGrid) ?? deriveHome(wall),
@@ -733,6 +762,11 @@ function UbersdrPanel({ api }) {
           readings,
           live,
           onLive: (host) => (host ? startLive(host) : stopLive()),
+          onNotConnected: () => setMessage({
+            bad: true,
+            text: 'that receiver is not connected yet — press "listen on '
+                + wall.length + ' receivers" first',
+          }),
         })
       : null,
 
