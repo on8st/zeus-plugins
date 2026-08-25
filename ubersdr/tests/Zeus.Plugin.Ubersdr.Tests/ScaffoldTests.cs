@@ -37,4 +37,36 @@ public class ScaffoldTests
         var id = Manifest().RootElement.GetProperty("id").GetString()!;
         Assert.Matches("^[a-z][a-z0-9.]*[a-z0-9]$", id);
     }
+
+    [Fact]
+    public void The_panel_id_matches_what_the_module_registers()
+    {
+        // A mismatch here means the panel silently never appears — the failure
+        // mode that a packaging test caught once already in this repository.
+        var panelId = Manifest().RootElement.GetProperty("ui")
+            .GetProperty("panels").EnumerateArray().First().GetProperty("id").GetString()!;
+
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        var module = File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+
+        Assert.Contains($"id: '{panelId}'", module);
+        Assert.Contains("export default function register", module);
+    }
+
+    [Fact]
+    public void The_panel_reads_the_header_layout_the_protocol_uses()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        var module = File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+
+        // The two offsets and the finite check are the whole metering contract;
+        // a typo in any of them shows a plausible wrong number.
+        Assert.Contains("getFloat32(13, true)", module);
+        Assert.Contains("getFloat32(17, true)", module);
+        Assert.Contains("Number.isFinite", module);
+    }
 }
