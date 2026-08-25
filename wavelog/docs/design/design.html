@@ -150,7 +150,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
     <p><strong>The consumer cannot be verified.</strong> <code>ILogbookPlugin</code> is never called anywhere in the engine repository — Zeus Link calls it, and Zeus Link is proprietary. Whether it calls a logbook plugin at all, when, whether a fallback exists, what happens on uninstall with entries in it: none of it is knowable from source, and all of it was load-bearing. <strong>Uninstall becomes the operator’s problem</strong> once their contacts live in this plugin’s database. And <strong>it rebuilds what already works</strong> — the native logbook’s browsing, ADIF and QSL paths are correct today.</p>
 
     <h3>The file is already the right shape</h3>
-    <p>The native plugin — <code>org.openhpsdr.logbook</code> — stores the published contract record, <code>LogbookEntrySnapshot</code>, in a collection called <code>entries</code> inside <code>zeus-logbook.db</code>, with LiteDB’s default mapper. All three facts were read out of its GPL assembly, not guessed. There is nothing to migrate and no second copy to keep honest.</p>
+    <p>Zeus stores the published contract record, <code>LogbookEntrySnapshot</code>, in a collection called <code>logs</code> inside <code>zeus-logbook.db</code>, under <code>ZeusProduct/logbook/</code>, with LiteDB’s default mapper. There is nothing to migrate and no second copy to keep honest. Every one of those facts was corrected by reading a real logbook rather than reasoning about one — see §12.</p>
     <p>So the plugin opens that file as a second handle and synchronises it. It declares <code>IZeusPlugin</code> and <code>IBackendPlugin</code> — and deliberately <em>not</em> <code>ILogbookPluginV2</code>.</p>
   </div>
 
@@ -169,8 +169,8 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
       <text class="nsub" x="99" y="102" text-anchor="middle">logs a QSO</text>
 
       <rect class="nbox" x="214" y="60" width="196" height="56" rx="2"/>
-      <text class="nlbl" x="312" y="84" text-anchor="middle">native logbook plugin</text>
-      <text class="nsub" x="312" y="102" text-anchor="middle">org.openhpsdr.logbook</text>
+      <text class="nlbl" x="312" y="84" text-anchor="middle">Zeus’s own logbook</text>
+      <text class="nsub" x="312" y="102" text-anchor="middle">Zeus Link</text>
 
       <line class="ln" x1="176" y1="88" x2="208" y2="88" marker-end="url(#s-n)"/>
       <line class="ln" x1="412" y1="88" x2="444" y2="88" marker-end="url(#s-n)"/>
@@ -181,7 +181,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 
       <rect class="nbox" x="470" y="66" width="250" height="56" rx="2"/>
       <text class="nlbl" x="595" y="90" text-anchor="middle">entries</text>
-      <text class="nsub" x="595" y="108" text-anchor="middle">LogbookEntrySnapshot — theirs</text>
+      <text class="nsub" x="595" y="108" text-anchor="middle">logs — LogbookEntrySnapshot</text>
 
       <rect class="nbox-a" x="470" y="140" width="250" height="56" rx="2"/>
       <text class="nlbl" x="595" y="164" text-anchor="middle">wavelog_sync</text>

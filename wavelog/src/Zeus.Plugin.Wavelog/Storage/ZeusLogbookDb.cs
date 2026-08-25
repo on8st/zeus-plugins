@@ -10,44 +10,40 @@ namespace Zeus.Plugin.Wavelog.Storage;
 /// A view onto <b>Zeus's own logbook</b>, not a logbook of our own.
 ///
 /// <para>This plugin does not implement <c>ILogbookPluginV2</c> and does not
-/// own the operator's QSOs. The native logbook — <c>org.openhpsdr.logbook</c> —
-/// keeps doing that, along with browsing, editing, ADIF and QSL, all of which
-/// are already correct. We attach to the same database and keep it in step with
-/// Wavelog.</para>
+/// own the operator's QSOs. Zeus keeps doing that, along with browsing, editing,
+/// ADIF and QSL, all of which are already correct. We attach to the same
+/// database and keep it in step with Wavelog.</para>
 ///
 /// <para><b>Everything here was verified before it was written:</b></para>
 /// <list type="bullet">
-/// <item>the file is <c>zeus-logbook.db</c> and the collection is
-/// <c>entries</c> — both read from the reference plugin's GPL assembly;</item>
+/// <item>the file is <c>zeus-logbook.db</c> and the collection is <c>logs</c> —
+/// both confirmed by reading a logbook Zeus actually wrote;</item>
 /// <item>the document is <see cref="LogbookEntrySnapshot"/>, the published
-/// contract record, stored with LiteDB's default mapper. The reference defines
-/// no storage type of its own, and a round-trip through the default mapper
-/// reproduces the same document keys;</item>
-/// <item>the reference opens with <c>Connection=shared</c>, which is the only
-/// mode under which two handles on one file see each other's writes. Two
-/// <c>Direct</c> handles open without error and then silently diverge, so this
-/// class must never use anything else.</item>
+/// contract record, stored with LiteDB's default mapper — a real stored QSO
+/// round-trips through it with identical keys;</item>
+/// <item><c>Connection=shared</c> is the only mode under which two handles on
+/// one file see each other's writes. Two <c>Direct</c> handles open without
+/// error and then silently diverge, so this class must never use anything
+/// else.</item>
 /// </list>
 ///
-/// <para>Our own bookkeeping lives in a separate collection the reference never
-/// reads; see <see cref="SyncState"/> for why it must not join the document.</para>
+/// <para>Our own bookkeeping lives in a separate collection Zeus never reads;
+/// see <see cref="SyncState"/> for why it must not join the document.</para>
 /// </summary>
 public sealed class ZeusLogbookDb : IDisposable
 {
-    /// <summary>The reference's file name, read from its GPL assembly.</summary>
+    /// <summary>Zeus's file name.</summary>
     public const string FileName = "zeus-logbook.db";
 
     /// <summary>
-    /// The reference's collection name — <c>logs</c>, confirmed by running the
-    /// shipped v1.1.0 plugin in an isolated engine and reading the file it
-    /// wrote.
+    /// Zeus's collection name — <c>logs</c>, confirmed by reading a logbook it
+    /// actually wrote.
     ///
-    /// <para>This was <c>entries</c> for a while, taken from the assembly's
-    /// string table. <c>entries</c> is the plugin's HTTP <em>route</em>. The
-    /// mistake survived a full test suite because both sides of every test used
-    /// the same wrong name, and it would have shipped as a plugin that attached
-    /// to an empty collection and reported a healthy, permanently idle sync.
-    /// Hence <see cref="Verify"/>.</para>
+    /// <para>This was <c>entries</c> for a while, taken from a string table
+    /// where it is in fact an HTTP <em>route</em>. The mistake survived a full
+    /// test suite because both sides of every test used the same wrong name, and
+    /// it would have shipped as a plugin that attached to an empty collection and
+    /// reported a healthy, permanently idle sync. Hence <see cref="Verify"/>.</para>
     /// </summary>
     public const string EntriesCollection = "logs";
 
@@ -66,20 +62,19 @@ public sealed class ZeusLogbookDb : IDisposable
     /// <summary>
     /// Every place a Zeus logbook is known to live, in the order we trust them.
     ///
-    /// <para>There are two, and they are not alternatives so much as two eras.
-    /// <b>Zeus Link keeps a built-in logbook of its own</b> at
-    /// <c>&lt;Application Support&gt;/ZeusProduct/logbook/zeus-logbook.db</c> —
-    /// same file name, same <c>logs</c> collection, same
-    /// <see cref="LogbookEntrySnapshot"/> documents, different directory. The
-    /// <c>org.openhpsdr.logbook</c> plugin instead writes to the engine's
-    /// <c>HostDataDirectory</c>.</para>
+    /// <para><b>Zeus Link keeps its logbook</b> at
+    /// <c>&lt;Application Support&gt;/ZeusProduct/logbook/zeus-logbook.db</c>.
+    /// The engine's own <c>HostDataDirectory</c> is checked too, because
+    /// <c>PrefsDbPath.LogbookPath()</c> names it and a future layout may use it
+    /// — same file name, same <c>logs</c> collection, same
+    /// <see cref="LogbookEntrySnapshot"/> documents, different directory.</para>
     ///
-    /// <para>This cost real time to find: the plugin reported "no logbook
-    /// installed" while the operator was looking at a QSO they had just logged.
-    /// Checking one hard-coded path and calling the answer definitive is exactly
-    /// the failure this class keeps producing, so it now checks both and — when
-    /// both exist — refuses to choose. Guessing which of two logbooks the
-    /// operator means is not a decision a synchroniser should make quietly.</para>
+    /// <para>This cost real time to find: the plugin reported "no logbook found"
+    /// while the operator was looking at a QSO they had just logged. Checking one
+    /// hard-coded path and calling the answer definitive is exactly the failure
+    /// this class keeps producing, so it checks both and — when both exist —
+    /// refuses to choose. Guessing which of two logbooks the operator means is
+    /// not a decision a synchroniser should make quietly.</para>
     ///
     /// <para>The product path is derived as a sibling of the host data
     /// directory rather than hard-coded, so it moves with a relocated profile.</para>
@@ -107,16 +102,11 @@ public sealed class ZeusLogbookDb : IDisposable
     /// <summary>
     /// Is there a logbook here at all?
     ///
-    /// <para>The Zeus logbook is a <em>plugin</em> — <c>org.openhpsdr.logbook</c>
-    /// — not something the engine provides. With it uninstalled the engine
-    /// creates no <c>zeus-logbook.db</c> and serves no logbook route; verified
-    /// against a bare engine and against a live install.</para>
-    ///
-    /// <para>So the file's absence means the operator has no logbook backend,
-    /// which is a different thing from an empty log and needs a different
-    /// message. We must also not <em>create</em> it: LiteDB would happily make
-    /// one, and then this looks like a logbook that simply has no QSOs in it —
-    /// a contented, permanently idle sync with nothing to say for itself.</para>
+    /// <para>Zeus creates the file when the operator logs their first contact,
+    /// so its absence means an untouched station rather than a broken one. We
+    /// must not <em>create</em> it: LiteDB would happily make one, and then this
+    /// looks like a logbook that simply has no QSOs in it — a contented,
+    /// permanently idle sync with nothing to say for itself.</para>
     /// </summary>
     public static bool ExistsIn(string dataDirectory)
         => FindExisting(dataDirectory).Count > 0;
@@ -126,9 +116,9 @@ public sealed class ZeusLogbookDb : IDisposable
     /// plugin, because "install the logbook" is not actionable and this is.
     /// </summary>
     public const string NoLogbookMessage =
-        "no Zeus logbook found. Looked for " + FileName + " in the engine data directory " +
-        "and in ZeusProduct/logbook beside it. Log a QSO in Zeus, or install \"Zeus Logbook\" " +
-        "(org.openhpsdr.logbook) from the feature list. Nothing will sync until one exists.";
+        "no Zeus logbook found. Looked for " + FileName + " in ZeusProduct/logbook and in " +
+        "the engine data directory. Log a QSO in Zeus and it will appear; nothing " +
+        "will sync until it does.";
 
     /// <summary>Said when two logbooks exist and the operator has to say which.</summary>
     public static string AmbiguousLogbookMessage(IEnumerable<string> found) =>
@@ -258,9 +248,9 @@ public sealed class ZeusLogbookDb : IDisposable
     /// Insert a QSO that came from Wavelog into the native logbook.
     ///
     /// <para>Marked as inbound so it is never pushed back — the loop-prevention
-    /// rule. Writing into a collection another plugin owns is deliberate and
-    /// safe only because both sides use shared mode and the document is the
-    /// contract record.</para>
+    /// rule. Writing into a collection Zeus owns is deliberate and safe only
+    /// because both sides use shared mode and the document is the contract
+    /// record.</para>
     /// </summary>
     public LogbookEntrySnapshot InsertFromWavelog(LogbookNewEntry e)
     {
@@ -322,8 +312,8 @@ public sealed class ZeusLogbookDb : IDisposable
     ///
     /// <para>Confirmation fields are Wavelog's to own — it is where they arrive
     /// — so nothing else about the contact is touched. This is the one place we
-    /// modify a QSO the operator or the native logbook created, and it is
-    /// deliberately the narrowest possible edit.</para>
+    /// modify a QSO the operator created, and it is deliberately the narrowest
+    /// possible edit.</para>
     /// </summary>
     public int ApplyConfirmations(string adifText)
     {

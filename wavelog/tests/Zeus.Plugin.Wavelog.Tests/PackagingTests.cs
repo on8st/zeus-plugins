@@ -130,29 +130,24 @@ public class PackagingTests
         Assert.Contains("api.registerPanel", module);
     }
 
-    // ---- the dependency we cannot declare ----------------------------------
+    // ---- what the operator reads -------------------------------------------
 
     [Fact]
-    public void The_description_says_which_feature_is_required()
+    public void The_description_says_it_is_not_a_logbook()
     {
-        // A plugin manifest has no dependency mechanism — no dependsOn, no
-        // requires, in neither the manifest schema nor the registry catalogue.
-        // So the description is the only place an operator learns this before
-        // installing, and the only thing standing between them and a feature
-        // that installs cleanly and then does nothing at all.
+        // The one misconception that changes how risky every button here looks.
         var description = Manifest().RootElement.GetProperty("description").GetString()!;
-        Assert.Contains("org.openhpsdr.logbook", description);
-        Assert.Contains("Zeus Logbook", description);
+        Assert.Contains("not a logbook", description);
+        Assert.Contains("untouched", description);
     }
 
     [Fact]
-    public void The_panel_warns_when_the_logbook_is_missing()
+    public void The_panel_handles_there_being_no_logbook_yet()
     {
-        // The other half: after installing, the panel is where they look. It
-        // reads /status, so it must actually consult the flag.
+        // It reads /status, so it must actually consult the flag rather than
+        // rendering a config form against nothing.
         var module = File.ReadAllText(Path.Combine(Output, "ui", "wavelog.es.js"));
         Assert.Contains("logbookInstalled", module);
-        Assert.Contains("org.openhpsdr.logbook", module);
     }
 
     // ---- what must and must not be in the output ---------------------------

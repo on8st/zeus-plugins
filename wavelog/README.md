@@ -65,45 +65,25 @@ compromise chosen over something better — it is the only mechanism available,
 and it has one real advantage: a backlog logged before the plugin was installed
 goes up on the first scan rather than being silently skipped.
 
-## There are two Zeus logbooks
+## Where the logbook lives
 
-Same file name, same `logs` collection, same `LogbookEntrySnapshot` documents —
-**different directories**:
-
-| | |
-|---|---|
-| `<Application Support>/ZeusProduct/logbook/zeus-logbook.db` | Zeus Link's **built-in** logbook. Present without any plugin |
-| `<engine host data dir>/zeus-logbook.db` | where the `org.openhpsdr.logbook` plugin writes |
+Zeus keeps its logbook at
+`<Application Support>/ZeusProduct/logbook/zeus-logbook.db`. The engine's own
+data directory is checked too — `PrefsDbPath.LogbookPath()` names it, and a
+future layout may use it. Same file name, same `logs` collection, same
+`LogbookEntrySnapshot` documents; different directory.
 
 This cost real time to find. The plugin reported *"no Zeus logbook found"* while
 the operator was looking at a QSO they had just logged — because it checked one
 path and treated the answer as definitive.
 
-So it now checks both, reports **which file** it attached to in `/status`, and
-when **both** exist it refuses to choose: syncing one while the operator reads
-the other is worse than doing nothing. Set `logbookPath` explicitly to settle it.
+So it checks both, reports **which file** it attached to in `/status`, and when
+**both** exist it refuses to choose: syncing one while the operator reads the
+other is worse than doing nothing. Set `logbookPath` explicitly to settle it.
 
-## It works better with the Zeus Logbook feature
-
-This is an **extension of the stock logbook**, not a replacement and not a
-logbook of its own. It syncs whichever logbook it finds — Zeus Link's built-in
-one, or the `org.openhpsdr.logbook` plugin's — but it needs one of them to
-exist.
-
-A plugin manifest has no way to declare a dependency — there is no `dependsOn`
-or `requires` in the manifest schema or the registry catalogue — so the
-dependency is handled three ways instead, none of them silent:
-
-- the manifest **description** says it, which is what you read before installing
-- the **panel** shows a banner when the logbook is absent, and keeps the settings
-  visible underneath so you can configure ahead of time
-- the plugin **never creates `zeus-logbook.db` itself** and says which id to
-  install, once, in the engine log
-
-Installing the logbook afterwards needs **no restart** — this attaches within
-half a minute, or immediately when the panel next reads `/status`. Verified by
-hot-installing the logbook into a running engine that already had this plugin
-loaded.
+This is an **extension of the Zeus logbook**, not a replacement and not a logbook
+of its own. It needs one to exist — Zeus creates it when you log your first
+contact — and uninstalling this leaves it untouched.
 
 ## Configuring it
 
@@ -147,9 +127,14 @@ Wavelog's own wording for this reason.
 ## Validating against a real Zeus
 
 `tools/zeus-harness/run.sh` stands the whole thing up from nothing: it builds the
-engine and this plugin, downloads the **real** `org.openhpsdr.logbook` v1.1.0
-from the Zeus registry and verifies its checksum, installs both into a throwaway
-sandbox, starts a real station engine, and drives the pair over HTTP.
+engine and this plugin, installs the plugin into a throwaway sandbox, seeds a
+logbook **at the layout Zeus really uses** with `tools/ZeusLogbookSeed`, starts a
+real station engine, and drives the lot over HTTP.
+
+The seeder matters: a logbook this plugin created would prove nothing about
+attaching to somebody else's database. It writes the document shape read out of a
+real product logbook, into the product location, so the harness exercises the
+configuration that actually ships.
 
 Credentials for `--live` come from the environment, never from the repo. On this
 machine they live in `~/.config/on8st/wavelog.env` (mode 600, outside any git
@@ -176,10 +161,11 @@ were found the first time it ran:
 
 | | |
 |---|---|
-| **the collection was `logs`, not `entries`** | `entries` is the reference's HTTP *route*; the collection name was read out of its string table and guessed wrong. Both sides of every unit test used the same wrong name, so the suite stayed green. Shipped, it would have attached to an empty collection and reported a healthy, permanently idle sync |
+| **the collection was `logs`, not `entries`** | `entries` is an HTTP *route*; the collection name was read out of a DLL string table and guessed wrong. Both sides of every unit test used the same wrong name, so the suite stayed green. Shipped, it would have attached to an empty collection and reported a healthy, permanently idle sync |
 | **`station_info` takes its key in the URL** | it is `function station_info($key = '')`, so CodeIgniter fills it from a path segment and never reads a POST body. The body form returns a 401 that reads exactly like a bad key |
 | **`lastfetchedid` is a JSON string** | a real instance returns `"1"` where the fake returned `1`. `GetValue<int>()` threw, killing the sync loop on every cycle — against *every* real Wavelog, forever |
 | **a duplicate is reported as HTTP 400 `abort`** | dedup is what makes at-least-once delivery safe, and it works — but the retry's reply is a *failure*, which the retry policy dead-lettered. One timed-out-but-delivered POST would have left a permanent "1 failed" that pressing retry could never clear |
+| **the logbook was in a different directory** | Zeus keeps it under `ZeusProduct/`, not the engine data directory. The plugin declared "no logbook found" to an operator looking at their own QSO |
 
 The first is why `ZeusLogbookDb.Verify()` exists: it now says so loudly on
 startup rather than syncing nothing in silence.

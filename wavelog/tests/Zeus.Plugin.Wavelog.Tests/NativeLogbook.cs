@@ -6,14 +6,14 @@ using Zeus.Plugins.Contracts.Extensions;
 namespace Zeus.Plugin.Wavelog.Tests;
 
 /// <summary>
-/// A stand-in for Zeus's own logbook plugin.
+/// A stand-in for Zeus itself.
 ///
 /// <para>The synchroniser does not own the log, so a test that reaches for the
 /// synchroniser to create a QSO would be testing a path that does not exist in
-/// the product. This writes contacts the way the native plugin does — its own
+/// the product. This writes contacts the way Zeus does — its own
 /// <c>LiteDatabase</c> handle, opened shared, on <c>zeus-logbook.db</c>, storing
-/// the contract record in the <c>entries</c> collection with the default mapper
-/// — so every test below starts from a log the plugin genuinely did not
+/// the contract record in the <c>logs</c> collection with the default mapper —
+/// so every test below starts from a log the plugin genuinely did not
 /// create.</para>
 ///
 /// <para>Keeping it a separate handle is deliberate. It is the only way the

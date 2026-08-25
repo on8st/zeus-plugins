@@ -38,10 +38,11 @@ fixes.
 
 ### What replaces it
 
-The native logbook plugin — `org.openhpsdr.logbook` — stores the published
-contract record, `LogbookEntrySnapshot`, in a collection called `entries` inside
-`zeus-logbook.db`, using LiteDB's default mapper. All three facts were read out
-of its GPL assembly, not guessed.
+Zeus stores the published contract record, `LogbookEntrySnapshot`, in a
+collection called `logs` inside `zeus-logbook.db`, using LiteDB's default mapper.
+The file lives under `ZeusProduct/logbook/`. Every one of those facts was
+corrected by reading a real logbook — see §12; none survived first contact
+unchanged.
 
 So there is nothing to migrate and no second copy to keep honest. **Attach to
 that file as a second handle and synchronise it.**

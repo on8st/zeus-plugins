@@ -7,11 +7,11 @@ namespace Zeus.Plugin.Wavelog.Tests;
 /// There are two Zeus logbooks, and picking the wrong one looks exactly like
 /// having no logbook at all.
 ///
-/// <para>Zeus Link keeps a built-in logbook at
+/// <para>Zeus Link keeps its logbook at
 /// <c>&lt;Application Support&gt;/ZeusProduct/logbook/zeus-logbook.db</c>. The
-/// <c>org.openhpsdr.logbook</c> plugin writes to the engine's host data
-/// directory instead. Same file name, same <c>logs</c> collection, same
-/// documents — different directory.</para>
+/// engine's own host data directory is checked too, because
+/// <c>PrefsDbPath.LogbookPath()</c> names it. Same file name, same <c>logs</c>
+/// collection, same documents — different directory.</para>
 ///
 /// <para>This is written from a live install where the plugin reported "no Zeus
 /// logbook found" while the operator was looking at a QSO they had just logged.
@@ -62,8 +62,8 @@ public sealed class LogbookDiscoveryTests : IDisposable
     [Fact]
     public void The_product_logbook_is_found_when_the_plugin_one_does_not_exist()
     {
-        // Exactly the live situation: no logbook plugin installed, Zeus Link
-        // logging into its own store, and the synchroniser previously blind.
+        // Exactly the live situation: Zeus Link logging into its own store, and
+        // the synchroniser previously blind to it.
         CreateLogbook(ProductLogbookDir);
 
         var found = Assert.Single(ZeusLogbookDb.FindExisting(HostData));
@@ -76,7 +76,7 @@ public sealed class LogbookDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void The_plugin_logbook_is_found_when_that_is_the_one_present()
+    public void The_engine_directory_logbook_is_found_when_that_is_the_one_present()
     {
         CreateLogbook(HostData);
         var found = Assert.Single(ZeusLogbookDb.FindExisting(HostData));
@@ -95,9 +95,8 @@ public sealed class LogbookDiscoveryTests : IDisposable
     [Fact]
     public void Two_logbooks_are_both_reported_rather_than_one_being_chosen()
     {
-        // Installing the logbook plugin on a machine that already has the
-        // built-in store gives two files with the same name. Silently syncing
-        // one of them would mean the operator's visible log and the synced log
+        // Two files with the same name in the two known locations. Silently
+        // syncing one would mean the operator's visible log and the synced log
         // are different logs, which is worse than doing nothing.
         CreateLogbook(HostData);
         CreateLogbook(ProductLogbookDir);

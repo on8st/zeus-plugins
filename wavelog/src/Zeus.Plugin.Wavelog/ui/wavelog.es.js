@@ -164,15 +164,14 @@ function WavelogPanel({ api }) {
           },
         },
           h('div', { style: { fontWeight: 600, color: 'var(--danger, #e5715f)' } },
-            'The Zeus Logbook feature is not installed'),
+            'No Zeus logbook found yet'),
           h('div', { style: { ...css.note, lineHeight: 1.5 } },
-            'This is an extension of the stock logbook. It keeps your log in step '
+            'This is an extension of the Zeus logbook. It keeps your log in step '
             + 'with Wavelog, but it is not a logbook itself and has nothing to '
-            + 'synchronise on its own.'),
+            + 'synchronise until one exists.'),
           h('div', { style: { ...css.note, lineHeight: 1.5 } },
-            'Install Zeus Logbook (org.openhpsdr.logbook) from the feature list, '
-            + 'then come back. No restart needed \u2014 this picks it up within '
-            + 'half a minute. Settings below are saved meanwhile.'))
+            'Log a contact in Zeus and it will appear \u2014 no restart needed, this '
+            + 'picks it up within half a minute. Settings below are saved meanwhile.'))
       : null,
 
     // Say plainly what this is. An operator who thinks the plugin *is* their

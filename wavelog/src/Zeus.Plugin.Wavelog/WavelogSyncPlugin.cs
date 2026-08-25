@@ -99,11 +99,10 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
     /// <summary>
     /// Attach to the operator's logbook, if there is one yet.
     ///
-    /// <para>The Zeus logbook is a plugin — <c>org.openhpsdr.logbook</c> — and a
-    /// fresh Zeus has no plugins at all: verified against a live install, whose
-    /// engine reports <c>{"plugins":[]}</c> and serves no logbook route. So this
-    /// plugin can perfectly well start before the thing it synchronises exists,
-    /// and must handle that as a state rather than an error.</para>
+    /// <para>An untouched station has no logbook file yet — Zeus creates it with
+    /// the first contact logged. So this plugin can perfectly well start before
+    /// the thing it synchronises exists, and must handle that as a state rather
+    /// than an error.</para>
     ///
     /// <para>Two rules. We never <em>create</em> <c>zeus-logbook.db</c> — LiteDB
     /// would happily make one, and an empty file we made ourselves is

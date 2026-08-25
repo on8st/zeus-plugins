@@ -4,7 +4,7 @@
   "name": "Wavelog Synchroniser",
   "version": "0.1.0",
   "author": "on8st",
-  "description": "Extension of the Zeus Logbook feature: keeps your log in step with a Wavelog instance, both directions. Pushes every contact you log, imports contacts logged by other apps, sweeps LoTW and QSL confirmations back, and can publish live rig state. It is not a logbook and never owns your QSOs. REQUIRES the \"Zeus Logbook\" feature (org.openhpsdr.logbook) \u2014 without it there is no log to synchronise and this does nothing.",
+  "description": "Extension of the Zeus logbook: keeps your log in step with a Wavelog instance, both directions. Pushes every contact you log, imports contacts logged by other apps, sweeps LoTW and QSL confirmations back, and can publish live rig state. It is not a logbook and never owns your QSOs \u2014 Zeus keeps doing that, and uninstalling this leaves your log untouched.",
   "homepage": "https://github.com/on8st/zeus-plugins",
   "license": "GPL-2.0-or-later",
   "sdk": {

@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# End-to-end harness: a real station engine, the real Zeus Logbook plugin, and
-# this synchroniser, driven through HTTP and asserted.
+# End-to-end harness: a real station engine, a Zeus logbook written by something
+# other than us, and this synchroniser, driven through HTTP and asserted.
 #
-# This exists because the unit suite cannot see the two things most likely to be
-# wrong, and both were: the name of the collection the reference writes, and the
-# JSON types a real Wavelog replies with. A green suite proved neither.
+# This exists because the unit suite cannot see what a real deployment does, and
+# repeatedly it was wrong: the collection name, the JSON types a real Wavelog
+# replies with, and which directory Zeus keeps its logbook in. A green suite
+# proved none of them.
+#
+# The logbook is seeded at the PRODUCT layout —
+# <data>/../ZeusProduct/logbook/zeus-logbook.db — because that is where Zeus Link
+# actually keeps it. Seeding it anywhere else would test a configuration nobody
+# runs.
 #
 # Nothing here touches the installed Zeus. ZEUS_PREFS_PATH and ZEUS_PLUGINS_PATH
 # move the whole data directory and plugin root into a sandbox — the engine's own
@@ -19,14 +25,6 @@
 #   ./run.sh --live --allow-write --station-profile N
 #
 set -euo pipefail
-
-# ---- the reference logbook plugin, pinned ----------------------------------
-# Checked, not trusted: the registry serves the hash and we verify it. This is
-# also the artefact that defines what "the operator's logbook" means, so its
-# version is part of what the harness pins.
-LOGBOOK_VERSION="1.1.0"
-LOGBOOK_URL="https://downloads.zeussdr.com/plugins/releases/download/logbook-v${LOGBOOK_VERSION}/logbook-${LOGBOOK_VERSION}.zip"
-LOGBOOK_SHA256="1a7bd5399dd723ad94658a8a1eb6e44d4a2f0e5a4c863783c35b4182362d1dff"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(cd "$HERE/../.." && pwd)"
@@ -71,19 +69,13 @@ ok "plugin and engine built"
 
 # ---- install ----------------------------------------------------------------
 section "install"
-mkdir -p "$SANDBOX/data" "$SANDBOX/features/on8st.wavelog" "$SANDBOX/features/org.openhpsdr.logbook"
-
-curl -sL --max-time 120 -o "$SANDBOX/logbook.zip" "$LOGBOOK_URL"
-ACTUAL="$(shasum -a 256 "$SANDBOX/logbook.zip" | cut -d' ' -f1)"
-check "reference logbook v$LOGBOOK_VERSION checksum" "$ACTUAL" "$LOGBOOK_SHA256"
-[ "$ACTUAL" = "$LOGBOOK_SHA256" ] || exit 1
-unzip -oq "$SANDBOX/logbook.zip" -d "$SANDBOX/features/org.openhpsdr.logbook"
+mkdir -p "$SANDBOX/data" "$SANDBOX/features/on8st.wavelog"
 
 cp -R "$PLUGIN_DIR/src/Zeus.Plugin.Wavelog/bin/Release/net10.0/" "$SANDBOX/features/on8st.wavelog/"
 # The host resolves the contracts from its own load context; shipping a copy
 # gives the interface types two identities and the plugin fails to bind.
 rm -f "$SANDBOX/features/on8st.wavelog/Zeus.Plugins.Contracts.dll"
-ok "both plugins installed into the sandbox"
+ok "plugin installed into the sandbox"
 
 # The panel is plain ES with no build step, so nothing else would catch a syntax
 # error before Zeus Link silently failed to render it.
@@ -95,6 +87,14 @@ if command -v node >/dev/null 2>&1; then
 else
   echo "  --   node not installed; panel syntax unchecked"
 fi
+
+# A logbook this plugin did not create, at the layout Zeus Link really uses.
+# ZeusLogbookSeed writes the document shape read out of a real product logbook.
+PRODUCT_LOGBOOK="$SANDBOX/ZeusProduct/logbook/zeus-logbook.db"
+"$DOTNET" run --project "$PLUGIN_DIR/tools/ZeusLogbookSeed" -c Release -- \
+  "$PRODUCT_LOGBOOK" ON0HARNESS 20m USB 2026-01-01T12:00:00Z >/dev/null
+[ -f "$PRODUCT_LOGBOOK" ] && ok "logbook seeded at the product layout" \
+                          || bad "could not seed the logbook"
 
 # ---- wavelog ----------------------------------------------------------------
 if [ "$LIVE" = "1" ]; then
@@ -121,26 +121,25 @@ ZEUS_PLUGINS_PATH="$SANDBOX/features" \
 ENGINE_PID=$!
 
 W="http://127.0.0.1:$PORT/api/plugins/on8st.wavelog"
-L="http://127.0.0.1:$PORT/api/plugins/org.openhpsdr.logbook"
 for _ in $(seq 1 120); do curl -sf --max-time 2 -o /dev/null "$W/status" && break; sleep 0.5; done
 curl -sf --max-time 5 -o /dev/null "$W/status" || { bad "engine did not come up"; tail -30 "$SANDBOX/engine.log"; exit 1; }
-ok "engine up on :$PORT with both plugins"
+ok "engine up on :$PORT with the plugin"
 
-grep -q "Loaded plugin org.openhpsdr.logbook" "$SANDBOX/engine.log" \
-  && ok "reference logbook loaded" || bad "reference logbook did not load"
+# The assertion that would have caught the collection-name bug, and the one that
+# would have caught reading the wrong directory: the plugin must see the QSOs
+# that are actually in the file, and must say which file it chose.
+STATUS_JSON="$(curl -sf --max-time 10 "$W/status")"
+check "the synchroniser found a logbook" "$(echo "$STATUS_JSON" | json '["logbookInstalled"]')" "True"
+check "it counted what is in it" "$(echo "$STATUS_JSON" | json '["qsosInLogbook"]')" "1"
 
-# The assertion that would have caught the collection-name bug: the plugin must
-# report the same number of QSOs the logbook itself reports. Equal-and-zero is
-# not proof, so a QSO is logged first.
-curl -sf --max-time 10 -X POST "$L/entry" -H 'content-type: application/json' -d '{
-  "callsign":"ON0HARNESS","frequencyMhz":14.074,"band":"20m","mode":"USB",
-  "rstSent":"59","rstRcvd":"57","qsoDateTimeUtc":"2026-01-01T12:00:00Z"}' >/dev/null
+ATTACHED="$(echo "$STATUS_JSON" | json '["logbookPath"]')"
+case "$ATTACHED" in
+  *ZeusProduct/logbook/zeus-logbook.db) ok "attached to the product logbook" ;;
+  *) bad "attached to the wrong file: $ATTACHED" ;;
+esac
 
-LB_COUNT="$(curl -sf --max-time 10 "$L/entries?skip=0&take=1" | json '["totalCount"]')"
-WL_COUNT="$(curl -sf --max-time 10 "$W/status" | json '["qsosInLogbook"]')"
-check "the synchroniser sees the logbook the reference writes" "$WL_COUNT" "$LB_COUNT"
 grep -q "wavelog: the logbook has no" "$SANDBOX/engine.log" \
-  && bad "attachment guard fired — the reference has renamed its collection" \
+  && bad "attachment guard fired — the collection has been renamed" \
   || ok "attachment guard clean"
 
 # ---- configure --------------------------------------------------------------
