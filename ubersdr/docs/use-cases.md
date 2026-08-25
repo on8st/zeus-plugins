@@ -33,9 +33,16 @@ directory gives SNR, noise floor and bearing for 50-odd receivers. A map of who
 is hearing what, on your band, this minute — measured rather than predicted.
 *Yes — one receiver is an anecdote.*
 
-**5. Diversity copy on weak DX.** Same frequency, three receivers, three
-positions. Pick the best copy or listen to two at once; QSB rarely fades
-everywhere simultaneously. *Yes — this is impossible with one.*
+**5. Diversity copy on weak DX.** ✅ **Built.** Same frequency, several
+receivers, several positions. The wall follows the VFO while you are receiving,
+so every connected receiver already sits on what you are listening to; tap `live`
+on any of them to hear it from there. QSB rarely fades everywhere at once, and a
+station you can barely copy may be perfectly readable 500 km away. *Yes — this is
+impossible with one.*
+
+This fell out of the transmit monitor rather than being built for itself: the
+same sockets, the same live decode, and `tune` retunes an open socket for
+nothing. The only addition was making the wall follow the radio.
 
 **6. Listen where the DX is.** Work a pileup by hearing it from the DX station's
 side: a receiver near them tells you where they are actually listening and who

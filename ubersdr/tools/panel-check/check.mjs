@@ -65,7 +65,14 @@ globalThis.__hooks = { useCallback, useEffect, useRef, useState, useMemo };
 const dataUrl = 'data:text/javascript;base64,' +
   Buffer.from(shim + code, 'utf8').toString('base64');
 
-const mod = await import(dataUrl);
+let mod;
+try {
+  mod = await import(dataUrl);
+} catch (e) {
+  // Print the error, not the 20 kB data: URL the module was loaded from.
+  console.error(`FAIL  ${e?.name ?? 'Error'}: ${e?.message ?? e}`);
+  process.exit(1);
+}
 
 if (typeof mod.default !== 'function') {
   console.error('FAIL  the module has no default export register(api)');
@@ -88,11 +95,22 @@ if (!registered?.id || typeof registered.component !== 'function') {
 
 // First render. A TDZ error, a bad hook order, or a typo in JSX-free
 // createElement all surface right here.
-cursor = 0;
-registered.component();
-
-// Render again with hook state retained, which is what a real re-render does.
-cursor = 0;
-registered.component();
+try {
+  cursor = 0;
+  registered.component();
+  // Again with hook state retained, which is what a real re-render does.
+  cursor = 0;
+  registered.component();
+} catch (e) {
+  console.error(`FAIL  ${e?.name ?? 'Error'}: ${e?.message ?? e}`);
+  // Stack frames name the data: URL the module was evaluated from, which is the
+  // whole file in base64. Keep the shape, drop the payload.
+  if (e?.stack) {
+    console.error(e.stack.split('\n').slice(1, 4)
+      .map((l) => l.replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/, '<panel>'))
+      .join('\n'));
+  }
+  process.exit(1);
+}
 
 console.log(`ok    panel '${registered.id}' rendered twice without throwing`);

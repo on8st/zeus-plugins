@@ -173,7 +173,40 @@ function UbersdrPanel({ api }) {
   // binding used by a callback above its own declaration is the shape of the
   // temporal-dead-zone bug that already took this panel down once.
   const keyedRef = useRef(false);
+  // The keying poll needs the current frequency without re-creating its interval
+  // every time the radio ticks.
+  const radioRef = useRef(null);
   const audio = useRef({ ctx: null, source: null, decoder: null });
+
+  // ---- following the radio ------------------------------------------------
+  //
+  // The receivers track what the operator is doing, which is what turns this
+  // from a transmit monitor into wide-area diversity: while receiving, every
+  // connected receiver sits on the frequency you are listening to, so a station
+  // you can barely copy may be perfectly readable 500 km away. While
+  // transmitting they follow the transmit frequency instead.
+  //
+  // `tune` retunes an already open socket — that is what it is for, and it is
+  // why this costs nothing: no reconnection, no fresh admission, no new slot.
+  const tuned = useRef({ hz: 0, mode: '' });
+
+  const retuneAll = useCallback((hz, mode) => {
+    if (!hz) return;
+    const t = tuned.current;
+    const m = (mode || 'usb').toLowerCase();
+    if (t.hz === hz && t.mode === m) return;        // nothing changed
+    tuned.current = { hz, mode: m };
+
+    for (const ws of sockets.current.values()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      try {
+        ws.send(JSON.stringify({
+          type: 'tune', frequency: hz, mode: m,
+          bandwidthLow: -2800, bandwidthHigh: -100,
+        }));
+      } catch { /* a socket closing mid-retune is not an error */ }
+    }
+  }, []);
 
   // The radio is polled rather than subscribed to: the engine's own /ws carries
   // binary telemetry only, with no state or keying messages on it.
@@ -182,13 +215,26 @@ function UbersdrPanel({ api }) {
     const tick = async () => {
       try {
         const r = await api.callBackend('GET', '/radio');
-        if (r.ok && alive) setRadio(await r.json());
+        if (!r.ok || !alive) return;
+        const next = await r.json();
+        radioRef.current = next;
+        setRadio(next);
       } catch { /* a restarting engine is not an error worth showing */ }
     };
     void tick();
     const t = window.setInterval(tick, 1000);
     return () => { alive = false; window.clearInterval(t); };
   }, [api]);
+
+  // While receiving, the wall follows the VFO — that is the diversity case.
+  // While transmitting it does not move: the keying handler has already pointed
+  // it at the transmit frequency, and chasing the VFO mid-over would retune the
+  // receivers away from the signal being measured.
+  useEffect(() => {
+    if (!radio?.available || keyedRef.current) return;
+    if (sockets.current.size === 0) return;
+    retuneAll(radio.vfoHz, radio.mode);
+  }, [radio, retuneAll]);
 
   const loadReceivers = useCallback(async () => {
     setBusy(true);
@@ -479,18 +525,24 @@ function UbersdrPanel({ api }) {
         keyedRef.current = keyed;
 
         if (keyed) {
-          // Playing audio while the microphone is open is a delayed howl put on
-          // the air. Nothing is audible while keyed, ever.
+          // Playing recorded audio while the microphone is open is a delayed
+          // howl put on the air. Live monitoring is the operator's explicit
+          // choice and is left alone; recorded playback is not.
           stopPlayback();
+          // Under split these differ, and monitoring the VFO while transmitting
+          // elsewhere would report that nobody hears the operator.
+          retuneAll(radioRef.current?.transmitHz, radioRef.current?.mode);
           startRecording();
         } else {
           stopRecording();
+          // Back to what the operator is listening to.
+          retuneAll(radioRef.current?.vfoHz, radioRef.current?.mode);
         }
       } catch { /* a restarting engine is not an error worth showing */ }
     };
     const t = window.setInterval(tick, 100);
     return () => { alive = false; window.clearInterval(t); };
-  }, [api, startRecording, stopRecording, stopPlayback]);
+  }, [api, startRecording, stopRecording, stopPlayback, retuneAll]);
 
   // Never leave sockets open on someone else's receiver.
   useEffect(() => () => disconnectAll(), [disconnectAll]);
