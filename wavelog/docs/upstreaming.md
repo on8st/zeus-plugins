@@ -119,38 +119,29 @@ the release exists, and the engine was pointed at that exact URL and sha256 via
 `{"source":"zip-url"}` in a sandbox — it downloaded, verified, extracted and
 activated. Whoever evaluates this can do the same before deciding.
 
-## Draft issue
+## The ask, as posted
 
-> **Title:** Plugin submission process — is there one?
->
-> I've written a Wavelog synchroniser plugin against the v1.4.0 SDK
-> (`abi 1`) and I'd like to know whether there's a way to get it into the
-> registry, or whether sideloading is the intended route for third-party
-> plugins.
->
-> It keeps the Zeus logbook in step with a Wavelog instance in both directions
-> — pushing logged contacts, importing ones logged elsewhere, sweeping QSL and
-> LoTW status back. It deliberately doesn't implement `ILogbookPluginV2`: it
-> attaches to `zeus-logbook.db` as a second shared-mode handle and keeps its own
-> bookkeeping in a separate collection, so uninstalling it leaves the operator's
-> log untouched.
->
-> GPL-2.0-or-later, same as the contracts it links. Source, tests and an
-> end-to-end harness are at <https://github.com/on8st/zeus-plugins>, and there's
-> a release at `wavelog-v0.1.0` if it's easier to try than to build. It's been
-> running against a live Zeus Link and a live Wavelog; tested on macOS only so
-> far.
->
-> Two things I couldn't answer from the public repo:
->
-> 1. The `homepage` links in `registry.json` (e.g.
->    `OpenHPSDR-Zeus-org/openhpsdr-zeus-plugins`) 404 for me. Is there a
->    repository third-party plugins should be proposed to?
-> 2. `downloadUrl` entries all point at `downloads.zeussdr.com`. Would you host
->    an artefact, or can a registry entry point at a GitHub release?
->
-> Happy to keep it a sideload if that's the intent — *install local feature*
-> works fine. Mainly want to avoid guessing at a process that already exists.
+**<https://github.com/Zeus-SDR/station-engine/issues/3>** — opened 2026-08-25.
 
-Deliberately short, asks a question rather than making a demand, and does not
-assume they owe anyone a listing.
+Three questions, none of them a demand:
+
+1. **Is there a repository third-party plugins should be proposed to?** Every
+   `homepage` link in `registry.json` 404s, so we may be looking in the wrong
+   place entirely.
+2. **Can a registry entry point at a GitHub release?** `PluginInstaller` only
+   requires HTTPS, and `wavelog-v0.1.0` was verified installing through
+   `{"source":"zip-url"}` with its sha256 — but they may prefer to host.
+3. **Which slot is meant for a configuration UI?** `PanelContribution`
+   documents *"Known slots: `workspace.amplifier`, `settings.plugins`,
+   `topbar.right`. Unknown slots are ignored."* — yet every shipped plugin with
+   a UI (NetLogger, WAV Recorder, Voyeur) uses `workspace.tools` with
+   `category: "tools"`, which is **not** in that list.
+
+That third one is worth recording whatever they answer. This plugin follows the
+shipped convention rather than the documented one, because three working
+examples beat a doc comment — but the two disagree, and only upstream can say
+which is stale.
+
+The issue closes by saying sideloading is entirely fine if that is the intent.
+It is: *install local feature* works, and nothing about this plugin needs the
+registry.
