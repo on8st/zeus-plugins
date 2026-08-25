@@ -44,16 +44,23 @@ globalThis.window = {
   setInterval: () => 0, clearInterval: () => {}, AudioContext: function () {},
 };
 globalThis.WebSocket = function () {};
+// What the vendored UMD bundle registers when a browser loads it.
+globalThis['opus-decoder'] = { OpusDecoder: function () {} };
 globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
 
-// The module imports React by bare specifier and the vendored decoder for its
-// side effect. Neither is resolvable here, so both are shimmed on disk-free
-// module resolution via a loader-less trick: rewrite and evaluate.
-const src = (await import('node:fs/promises')).readFile;
-let code = await src(modulePath, 'utf8');
-code = code
-  .replace(/^import React[^\n]*\n/m, '')
-  .replace(/^import '\.\/vendor\/[^\n]*\n/m, '');
+// The module imports React by a bare specifier, and its own siblings by
+// relative path. A data: URL has no base to resolve "./map.js" against, so the
+// shimmed copy is written NEXT TO the original and imported from there —
+// relative imports then resolve exactly as they will in the browser, and stack
+// traces name a real file.
+const { readFile, writeFile, unlink } = await import('node:fs/promises');
+let code = await readFile(modulePath, 'utf8');
+code = code.replace(/^import React[^\n]*\n/m, '');
+// Vendored bundles are imported for their side effect and are UMD. Node
+// evaluates them as CommonJS and pulls dependencies a browser ES module never
+// touches, so they are stubbed here — their real loading is a browser concern,
+// and PackagingTests already asserts they ship.
+code = code.replace(/^import '\.\/vendor\/[^\n]*\n/gm, '');
 
 const shim = `
 const React = globalThis.__React;
@@ -62,16 +69,22 @@ const { useCallback, useEffect, useRef, useState, useMemo } = globalThis.__hooks
 globalThis.__React = React;
 globalThis.__hooks = { useCallback, useEffect, useRef, useState, useMemo };
 
-const dataUrl = 'data:text/javascript;base64,' +
-  Buffer.from(shim + code, 'utf8').toString('base64');
+const dir = path.dirname(path.resolve(modulePath));
+const tmp = path.join(dir, `.panel-check-${process.pid}.mjs`);
+await writeFile(tmp, shim + code, 'utf8');
+
+const clean = (s) => String(s ?? '').split(tmp).join('<panel>');
 
 let mod;
 try {
-  mod = await import(dataUrl);
+  mod = await import(pathToFileURL(tmp).href);
 } catch (e) {
-  // Print the error, not the 20 kB data: URL the module was loaded from.
-  console.error(`FAIL  ${e?.name ?? 'Error'}: ${e?.message ?? e}`);
+  console.error(`FAIL  ${e?.name ?? 'Error'}: ${clean(e?.message ?? e)}`);
+  await unlink(tmp).catch(() => {});
   process.exit(1);
+} finally {
+  // Leave it only long enough to import; a stray file in ui/ would be packaged.
+  setTimeout(() => unlink(tmp).catch(() => {}), 0);
 }
 
 if (typeof mod.default !== 'function') {
@@ -102,15 +115,11 @@ try {
   cursor = 0;
   registered.component();
 } catch (e) {
-  console.error(`FAIL  ${e?.name ?? 'Error'}: ${e?.message ?? e}`);
-  // Stack frames name the data: URL the module was evaluated from, which is the
-  // whole file in base64. Keep the shape, drop the payload.
-  if (e?.stack) {
-    console.error(e.stack.split('\n').slice(1, 4)
-      .map((l) => l.replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/, '<panel>'))
-      .join('\n'));
-  }
+  console.error(`FAIL  ${e?.name ?? 'Error'}: ${clean(e?.message ?? e)}`);
+  if (e?.stack) console.error(clean(e.stack).split('\n').slice(1, 4).join('\n'));
+  await unlink(tmp).catch(() => {});
   process.exit(1);
 }
+await unlink(tmp).catch(() => {});
 
 console.log(`ok    panel '${registered.id}' rendered twice without throwing`);

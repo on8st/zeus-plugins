@@ -29,6 +29,29 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
 {
     private const string ConfigKey = "ubersdr.config";
 
+    /// <summary>
+    /// What the operator has chosen. Persisted by the host, per plugin.
+    ///
+    /// <para><c>HomeGrid</c> exists because the directory's <c>distance</c> and
+    /// <c>bearing</c> are relative to <em>whoever called the API</em>, geolocated
+    /// by IP — measured 28 km out on this station, and a VPN would put it in
+    /// another country. Everything else here is the operator's selection, which
+    /// is theirs to keep rather than to re-make every session.</para>
+    /// </summary>
+    public sealed class StoredConfig
+    {
+        public string HomeGrid { get; set; } = "";
+        public List<string> SelectedHosts { get; set; } = [];
+        public string Preset { get; set; } = "spread";
+        public int Count { get; set; } = 6;
+        public double? MinDistanceKm { get; set; }
+        public double? MaxDistanceKm { get; set; }
+        public double? BearingFrom { get; set; }
+        public double? BearingTo { get; set; }
+        public int MinFreeSlots { get; set; } = 1;
+        public List<string> ExcludeHosts { get; set; } = [];
+    }
+
     private HttpClient? _http;
     private InstanceDirectory? _directory;
     private EngineRadio? _radio;
@@ -96,12 +119,35 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
             return Results.Ok(new { available = keyed is not null, keyed = keyed ?? false });
         });
 
-        // Receivers worth offering for the band the operator is on.
-        endpoints.MapGet("receivers", async (int? count, CancellationToken ct) =>
+        // Receivers worth offering, with the operator's constraints applied.
+        endpoints.MapGet("receivers", async (
+            int? count, string? preset,
+            double? minKm, double? maxKm, double? bearingFrom, double? bearingTo,
+            int? minFree, string? exclude,
+            CancellationToken ct) =>
         {
+            var limits = new ReceiverConstraints
+            {
+                MinDistanceKm = minKm,
+                MaxDistanceKm = maxKm,
+                BearingFrom = bearingFrom,
+                BearingTo = bearingTo,
+                MinFreeSlots = minFree ?? 1,
+                ExcludeHosts = string.IsNullOrWhiteSpace(exclude)
+                    ? []
+                    : exclude.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            };
+
             var all = await _directory!.GetAsync(ct).ConfigureAwait(false);
-            var candidates = ReceiverSelection.Candidates(all);
-            var wall = ReceiverSelection.SpreadByBearing(candidates, count ?? 6);
+            var candidates = ReceiverSelection.Candidates(all, limits);
+            var n = count ?? 6;
+
+            var suggested = (preset ?? "spread").ToLowerInvariant() switch
+            {
+                "nearest" => candidates.Take(n).ToList(),
+                "furthest" => ReceiverSelection.Furthest(candidates, n).ToList(),
+                _ => ReceiverSelection.SpreadByBearing(candidates, n).ToList(),
+            };
 
             return Results.Ok(new
             {
@@ -112,71 +158,43 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
                 excludedNoAntenna = all.Count(i => i.IsOnline && !i.AntennaConnected),
                 excludedFull = all.Count(i => i.CanMeter && !i.HasCapacity),
                 offline = all.Count(i => !i.IsOnline),
-                suggested = wall.Select(Dto),
-                candidates = candidates.Take(60).Select(Dto),
+                excludedByLimits = all.Count(i => i.CanMeter && i.HasCapacity && !limits.Allows(i)),
+                suggested = suggested.Select(Dto),
+                // Everything that passes the filters, so the panel can offer a
+                // manual pick rather than only the preset's choice.
+                candidates = candidates.Select(Dto),
             });
         });
 
-        // Admission control, done here rather than in the panel.
-        //
-        // Not because the panel could not: the instances reflect the requesting
-        // origin in Access-Control-Allow-Origin and would allow it. It lives
-        // here so that the courtesy rules are in one place — one directory fetch
-        // shared by the whole panel, and a refusal that is honoured rather than
-        // retried in a render loop. The session id is a client-generated UUID
-        // and the instance ties it to the requesting IP, which is the same
-        // machine either way.
-        endpoints.MapPost("connect", async (ConnectRequest req, CancellationToken ct) =>
+        // Named receivers, for a manual selection the operator has saved.
+        endpoints.MapGet("receivers/by-host", async (string hosts, CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(req.Host))
-                return Results.BadRequest(new { error = "host is required" });
-
+            var wanted = hosts.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var all = await _directory!.GetAsync(ct).ConfigureAwait(false);
-            var instance = all.FirstOrDefault(i =>
-                string.Equals(i.Host, req.Host, StringComparison.OrdinalIgnoreCase));
-            if (instance is null)
-                return Results.BadRequest(new { error = $"unknown instance '{req.Host}'" });
-            if (!instance.CanMeter)
-                return Results.BadRequest(new
-                {
-                    error = instance.IsOnline
-                        ? "that receiver has no antenna connected, so it cannot report a signal level"
-                        : "that receiver is offline",
-                });
 
-            var session = Guid.NewGuid().ToString();
-            try
+            // Preserve the operator's order, and report what has gone away
+            // rather than silently returning a shorter list.
+            var found = wanted
+                .Select(hostName => all.FirstOrDefault(i =>
+                    string.Equals(i.Host, hostName, StringComparison.OrdinalIgnoreCase)))
+                .Where(i => i is not null).Select(i => i!).ToList();
+
+            return Results.Ok(new
             {
-                using var reply = await _http!.PostAsJsonAsync(
-                    $"{instance.BaseUrl}/connection", new { user_session_id = session }, ct)
-                    .ConfigureAwait(false);
-                var body = await reply.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                receivers = found.Select(Dto),
+                missing = wanted.Where(hostName =>
+                    !found.Any(i => string.Equals(i.Host, hostName, StringComparison.OrdinalIgnoreCase))),
+                unusable = found.Where(i => !i.CanMeter || !i.HasCapacity).Select(i => i.Host),
+            });
+        });
 
-                if (!reply.IsSuccessStatusCode)
-                {
-                    // A refusal is the instance saying it is full or unwilling.
-                    // Honour it; do not retry.
-                    _log?.LogInformation("ubersdr: {Host} refused a connection ({Status})",
-                        instance.Host, (int)reply.StatusCode);
-                    return Results.Json(new { error = "the receiver refused the connection", detail = Trim(body) },
-                        statusCode: StatusCodes.Status503ServiceUnavailable);
-                }
+        endpoints.MapGet("config", async (CancellationToken ct) =>
+            Results.Ok(await LoadConfigAsync(ct).ConfigureAwait(false)));
 
-                return Results.Ok(new
-                {
-                    sessionId = session,
-                    wsBase = instance.WebSocketBase,
-                    // Version 2 is the only one that streams audio: version 3
-                    // connects, sends a status message, and then nothing.
-                    version = 2,
-                    admission = Trim(body),
-                });
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                return Results.Json(new { error = "could not reach the receiver", detail = ex.Message },
-                    statusCode: StatusCodes.Status504GatewayTimeout);
-            }
+        endpoints.MapPost("config", async (StoredConfig body, CancellationToken ct) =>
+        {
+            await _ctx!.Settings.SetAsync(ConfigKey, body, ct).ConfigureAwait(false);
+            return Results.Ok(new { ok = true });
         });
 
         endpoints.MapGet("status", async (CancellationToken ct) =>
@@ -190,6 +208,20 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
                 directoryFetchedUtc = _directory.FetchedUtc,
             });
         });
+    }
+
+    private async Task<StoredConfig> LoadConfigAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _ctx!.Settings.GetAsync<StoredConfig>(ConfigKey, ct).ConfigureAwait(false)
+                   ?? new StoredConfig();
+        }
+        catch (Exception ex)
+        {
+            _log?.LogWarning(ex, "ubersdr: could not read settings; starting with defaults");
+            return new StoredConfig();
+        }
     }
 
     /// <summary>Body of a connect request from the panel.</summary>
@@ -209,6 +241,9 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
         baseUrl = i.BaseUrl,
         distanceKm = double.IsNaN(i.DistanceKm) ? (double?)null : Math.Round(i.DistanceKm, 1),
         bearingDegrees = double.IsNaN(i.BearingDegrees) ? (double?)null : Math.Round(i.BearingDegrees),
+        lat = i.HasPosition ? Math.Round(i.Latitude, 4) : (double?)null,
+        lon = i.HasPosition ? Math.Round(i.Longitude, 4) : (double?)null,
+        i.Country,
         i.AvailableClients,
         i.MaxClients,
     };

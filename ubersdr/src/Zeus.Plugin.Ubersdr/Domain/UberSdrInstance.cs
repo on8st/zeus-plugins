@@ -21,6 +21,9 @@ public sealed record UberSdrInstance(
     bool Tls,
     double DistanceKm,
     double BearingDegrees,
+    double Latitude,
+    double Longitude,
+    string Country,
     int AvailableClients,
     int MaxClients,
     bool IsOnline,
@@ -44,6 +47,9 @@ public sealed record UberSdrInstance(
 
     public bool HasCapacity => AvailableClients > 0;
 
+    /// <summary>Whether this can be drawn on a map at all.</summary>
+    public bool HasPosition => !double.IsNaN(Latitude) && !double.IsNaN(Longitude);
+
     public static UberSdrInstance? FromJson(JsonNode? n)
     {
         if (n is not JsonObject o) return null;
@@ -59,6 +65,9 @@ public sealed record UberSdrInstance(
             Tls: Bool(o, "tls") ?? true,
             DistanceKm: Num(o, "distance") ?? double.NaN,
             BearingDegrees: Num(o, "bearing_degrees") ?? double.NaN,
+            Latitude: Num(o, "latitude") ?? double.NaN,
+            Longitude: Num(o, "longitude") ?? double.NaN,
+            Country: Str(o, "country_name") ?? "",
             AvailableClients: (int)(Num(o, "available_clients") ?? 0),
             MaxClients: (int)(Num(o, "max_clients") ?? 0),
             IsOnline: Bool(o, "is_online") ?? false,

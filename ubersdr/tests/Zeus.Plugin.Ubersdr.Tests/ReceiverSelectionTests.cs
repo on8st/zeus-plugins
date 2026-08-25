@@ -133,6 +133,8 @@ public class ReceiverSelectionTests
 
     private static UberSdrInstance Rx(
         string id, double km, double bearing,
-        bool online = true, bool antenna = true, int free = 5) =>
-        new(id, "CALL", id, "loc", id + ".example", true, km, bearing, free, 20, online, antenna);
+        bool online = true, bool antenna = true, int free = 5,
+        double lat = 51.0, double lon = 4.6) =>
+        new(id, "CALL", id, "loc", id + ".example", true, km, bearing,
+            lat, lon, "Belgium", free, 20, online, antenna);
 }

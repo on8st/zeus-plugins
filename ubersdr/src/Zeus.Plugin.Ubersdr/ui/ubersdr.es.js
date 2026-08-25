@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 // UMD, imported for its side effect: in an ES module it takes the globalThis
 // branch and registers itself. Vendored — see vendor/README.md.
 import './vendor/opus-decoder.min.js';
+import { MAP_W, MAP_H, COAST_PATH, project, deriveHome, greatCirclePath, gridToLatLon } from './map.js';
 
 const h = React.createElement;
 
@@ -158,6 +159,83 @@ function Comparison({ takes, hosts }) {
       + 'minutes apart: propagation drifts.'));
 }
 
+// The world map: coastline, receivers where they are, a great circle to each.
+//
+// Line thickness and dot colour carry the signal-to-noise, so the shape of what
+// is getting out is visible without reading a number. Nothing here is clickable
+// yet beyond selecting a receiver to listen to — the tiles remain the place to
+// operate, and the map is the place to see.
+function ReceiverMap({ home, receivers, readings, live, onLive }) {
+  if (!home) {
+    return h('div', { style: css.note },
+      'No position yet — the map needs at least one receiver with a known '
+      + 'location, or your locator in settings.');
+  }
+
+  const [hx, hy] = project(home.lon, home.lat);
+  const placed = receivers.filter((r) => r.lat != null && r.lon != null);
+
+  const snrOf = (host) => readings[host]?.snr ?? null;
+  const width = (snr) => (snr == null ? 0.6 : 0.6 + Math.max(0, Math.min(3.4, snr / 18)));
+  const colour = (snr) =>
+    snr == null ? 'var(--fg-3, #5a5e66)'
+      : snr >= 30 ? 'var(--success, #4fbfa0)'
+      : snr >= 15 ? 'var(--warning, #d8a657)'
+      : 'var(--danger, #e5715f)';
+
+  return h('div', { style: { overflowX: 'auto' } },
+    h('svg', {
+      viewBox: `0 0 ${MAP_W} ${MAP_H}`,
+      role: 'img',
+      'aria-label': `World map of ${placed.length} remote receivers, with a great-circle path from the operator to each.`,
+      style: { width: '100%', height: 'auto', display: 'block',
+               background: 'var(--bg-2, #16181d)', borderRadius: 3 },
+    },
+      h('path', {
+        d: COAST_PATH,
+        fill: 'none',
+        stroke: 'var(--fg-3, #5a5e66)',
+        strokeWidth: 0.7,
+        opacity: 0.75,
+      }),
+
+      // Paths first, so the receiver dots sit on top of them.
+      placed.map((r) => h('path', {
+        key: 'p' + r.host,
+        d: greatCirclePath(home, { lat: r.lat, lon: r.lon }),
+        fill: 'none',
+        stroke: colour(snrOf(r.host)),
+        strokeWidth: width(snrOf(r.host)),
+        opacity: live === r.host ? 1 : 0.65,
+      })),
+
+      placed.map((r) => {
+        const [x, y] = project(r.lon, r.lat);
+        const snr = snrOf(r.host);
+        return h('g', {
+          key: r.host,
+          style: { cursor: 'pointer' },
+          onClick: () => onLive(live === r.host ? null : r.host),
+        },
+          h('circle', {
+            cx: x, cy: y,
+            r: live === r.host ? 6 : 4,
+            fill: colour(snr),
+            stroke: live === r.host ? 'var(--fg, #e6e8ea)' : 'none',
+            strokeWidth: 1.5,
+          }),
+          h('text', {
+            x, y: y - 8, textAnchor: 'middle',
+            style: { fontSize: 9, fill: 'var(--fg-2, #9aa0a6)', pointerEvents: 'none' },
+          }, `${r.callsign || r.host.split('.')[0]}${snr == null ? '' : ` ${snr.toFixed(0)}`}`));
+      }),
+
+      // The operator last, so nothing hides it.
+      h('circle', { cx: hx, cy: hy, r: 4.5, fill: 'none',
+                    stroke: 'var(--fg, #e6e8ea)', strokeWidth: 1.6 }),
+      h('circle', { cx: hx, cy: hy, r: 1.6, fill: 'var(--fg, #e6e8ea)' })));
+}
+
 function UbersdrPanel({ api }) {
   const [radio, setRadio] = useState(null);
   const [wall, setWall] = useState([]);
@@ -248,6 +326,21 @@ function UbersdrPanel({ api }) {
   }, [api]);
 
   useEffect(() => { void loadReceivers(); }, [loadReceivers]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.callBackend('GET', '/config');
+        if (r.ok) setHomeGrid((await r.json()).homeGrid ?? '');
+      } catch { /* defaults are fine */ }
+    })();
+  }, [api]);
+
+  const saveHomeGrid = useCallback(async (grid) => {
+    setHomeGrid(grid);
+    try { await api.callBackend('POST', '/config', { homeGrid: grid }); }
+    catch { /* it will be re-entered; not worth an error */ }
+  }, [api]);
 
   const setReading = useCallback((host, patch) =>
     setReadings((prev) => ({ ...prev, [host]: { ...prev[host], ...patch } })), []);
@@ -507,6 +600,8 @@ function UbersdrPanel({ api }) {
   // someone who cannot transmit at this moment. Same recording path, same peak
   // hold; only the trigger differs.
   const [capturing, setCapturing] = useState(0);
+  const [view, setView] = useState('map');
+  const [homeGrid, setHomeGrid] = useState('');
   const captureFor = useCallback(async (seconds) => {
     if (sockets.current.size === 0) {
       setMessage({ bad: true, text: 'connect some receivers first' });
@@ -611,12 +706,44 @@ function UbersdrPanel({ api }) {
         : null,
       message ? h('span', { style: message.bad ? css.bad : null }, message.text) : null),
 
-    h('div', { style: css.grid },
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+      h('button', {
+        style: { ...css.button, borderColor: view === 'map' ? 'var(--accent, #4fbfa0)' : undefined },
+        onClick: () => setView('map'),
+      }, 'map'),
+      h('button', {
+        style: { ...css.button, borderColor: view === 'tiles' ? 'var(--accent, #4fbfa0)' : undefined },
+        onClick: () => setView('tiles'),
+      }, 'tiles'),
+      h('span', { style: css.note }, 'locator'),
+      h('input', {
+        style: { ...css.input, maxWidth: 88 },
+        value: homeGrid,
+        placeholder: 'JO21ha',
+        onChange: (e) => saveHomeGrid(e.target.value),
+        title: 'Your Maidenhead locator. Without it the map places you by the '
+             + 'directory\u2019s idea of where your IP is, which can be tens of '
+             + 'kilometres out.',
+      })),
+
+    view === 'map'
+      ? h(ReceiverMap, {
+          home: gridToLatLon(homeGrid) ?? deriveHome(wall),
+          receivers: wall,
+          readings,
+          live,
+          onLive: (host) => (host ? startLive(host) : stopLive()),
+        })
+      : null,
+
+    view === 'tiles'
+      ? h('div', { style: css.grid },
       wall.map((rx) => h(Tile, {
         key: rx.host, rx, reading: readings[rx.host],
         live: live === rx.host,
         onLive: (host) => (host ? startLive(host) : stopLive()),
-      }))),
+      })))
+      : null,
 
     live
       ? h('div', {
