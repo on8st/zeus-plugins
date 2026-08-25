@@ -49,3 +49,28 @@ and excluded from upstream.
 - **Never ship `Zeus.Plugins.Contracts`** in the plugin output — the host
   resolves it from the default load context.
 - **Never write into `~/Repos/on8st/station-engine`** — it is upstream's tree.
+
+## Licence
+
+**GPL-2.0-or-later**, matching `Zeus.Plugins.Contracts`, which every plugin here
+links against. Full text in [`LICENSE`](LICENSE); each source file carries an
+SPDX header.
+
+## Building
+
+Plugins reference the station-engine contracts by project. `ZeusEngineRoot`
+defaults to a **sibling checkout**:
+
+```
+some-parent/
+├── station-engine/     git clone https://github.com/Zeus-SDR/station-engine
+└── zeus-plugins/       this repo
+```
+
+Anything else, point it at the engine explicitly:
+
+```sh
+dotnet build -p:ZeusEngineRoot=/path/to/station-engine
+```
+
+Needs the .NET 10 SDK.
