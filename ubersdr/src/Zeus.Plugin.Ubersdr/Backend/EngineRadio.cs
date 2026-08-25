@@ -46,6 +46,36 @@ public sealed class EngineRadio(HttpClient http, ILogger? log = null)
         return 0;
     }
 
+    /// <summary>
+    /// Keying state only, in one upstream call.
+    ///
+    /// <para>The monitor polls this at 10 Hz to catch the start and end of a
+    /// transmission — the engine has no state stream, its <c>/ws</c> being
+    /// binary telemetry only. Reading the full snapshot at that rate would make
+    /// two engine calls twenty times a second for one boolean, so keying gets
+    /// its own route and frequency is read slowly alongside it.</para>
+    /// </summary>
+    public async Task<bool?> ReadMoxAsync(CancellationToken ct)
+    {
+        try
+        {
+            var ptt = JsonNode.Parse(
+                await http.GetStringAsync($"{_base}/api/radio/ptt-status", ct).ConfigureAwait(false));
+            // tun and two-tone key the transmitter as surely as MOX does, and a
+            // monitor that ignored them would miss exactly the carrier an
+            // operator sends to compare antennas.
+            return (Bool(ptt, "moxOn") ?? false)
+                || (Bool(ptt, "tunOn") ?? false)
+                || (Bool(ptt, "twoToneOn") ?? false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                      or System.Text.Json.JsonException)
+        {
+            log?.LogDebug(ex, "ubersdr: could not read keying state");
+            return null;
+        }
+    }
+
     public async Task<RadioSnapshot?> ReadAsync(CancellationToken ct)
     {
         try

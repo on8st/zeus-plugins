@@ -69,4 +69,42 @@ public class ScaffoldTests
         Assert.Contains("getFloat32(17, true)", module);
         Assert.Contains("Number.isFinite", module);
     }
+
+    [Fact]
+    public void The_vendored_opus_decoder_ships_with_its_licence()
+    {
+        // The panel imports it for its side effect; without the file the module
+        // fails to load and the panel silently never appears. And a vendored
+        // MIT file without its licence text is a licence problem, not an
+        // oversight.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        var ui = Path.Combine(dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui");
+
+        Assert.True(File.Exists(Path.Combine(ui, "vendor", "opus-decoder.min.js")));
+        Assert.True(File.Exists(Path.Combine(ui, "vendor", "opus-decoder.LICENSE")));
+
+        var module = File.ReadAllText(Path.Combine(ui, "ubersdr.es.js"));
+        Assert.Contains("./vendor/opus-decoder.min.js", module);
+    }
+
+    [Fact]
+    public void Nothing_is_played_while_the_operator_is_keyed()
+    {
+        // The one safety property of the whole design: audio out of the speakers
+        // with an open microphone is a delayed howl put on the air. The keying
+        // handler must stop playback before it starts recording.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        var module = File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+
+        var keyedBranch = module[module.IndexOf("if (keyed) {", StringComparison.Ordinal)..];
+        var stop = keyedBranch.IndexOf("stopPlayback()", StringComparison.Ordinal);
+        var start = keyedBranch.IndexOf("startRecording()", StringComparison.Ordinal);
+
+        Assert.True(stop >= 0, "keying must stop any playback");
+        Assert.True(start >= 0, "keying must start recording");
+        Assert.True(stop < start, "playback must be stopped before recording begins");
+    }
 }

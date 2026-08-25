@@ -13,7 +13,13 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
+// UMD, imported for its side effect: in an ES module it takes the globalThis
+// branch and registers itself. Vendored — see vendor/README.md.
+import './vendor/opus-decoder.min.js';
+
 const h = React.createElement;
+
+const OpusDecoder = () => globalThis['opus-decoder']?.OpusDecoder;
 
 // The audio frame header, confirmed byte for byte against live captures.
 // See docs/design/source/protocol.md.
@@ -90,7 +96,11 @@ function UbersdrPanel({ api }) {
   const [readings, setReadings] = useState({});
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [takes, setTakes] = useState([]);        // finished recordings, newest first
+  const [playing, setPlaying] = useState(null);  // host currently being played back
   const sockets = useRef(new Map());
+  const recording = useRef({ active: false, byHost: new Map(), startedAt: 0 });
+  const audio = useRef({ ctx: null, source: null, decoder: null });
 
   // The radio is polled rather than subscribed to: the engine's own /ws carries
   // binary telemetry only, with no state or keying messages on it.
@@ -106,6 +116,36 @@ function UbersdrPanel({ api }) {
     const t = window.setInterval(tick, 1000);
     return () => { alive = false; window.clearInterval(t); };
   }, [api]);
+
+  // Keying is polled fast, and only while receivers are connected — there is no
+  // state stream on the engine, and there is no reason to hammer it when the
+  // panel is merely open. 10 Hz brackets a transmission to about a tenth of a
+  // second, which is nothing beside a 200 ms tune and a multi-second over.
+  const keyedRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (sockets.current.size === 0) return;
+      try {
+        const r = await api.callBackend('GET', '/ptt');
+        if (!r.ok || !alive) return;
+        const { keyed } = await r.json();
+        if (keyed === keyedRef.current) return;
+        keyedRef.current = keyed;
+
+        if (keyed) {
+          // Playing audio while the microphone is open is a delayed howl put on
+          // the air. Nothing is audible while keyed, ever.
+          stopPlayback();
+          startRecording();
+        } else {
+          stopRecording();
+        }
+      } catch { /* a restarting engine is not an error worth showing */ }
+    };
+    const t = window.setInterval(tick, 100);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [api, startRecording, stopRecording, stopPlayback]);
 
   const loadReceivers = useCallback(async () => {
     setBusy(true);
@@ -158,7 +198,25 @@ function UbersdrPanel({ api }) {
         ws.onmessage = (ev) => {
           if (typeof ev.data === 'string') return;      // status/error JSON
           const hdr = readHeader(ev.data);
-          if (hdr) setReading(rx.host, { snr: hdr.snr });
+          if (!hdr) return;
+
+          setReading(rx.host, { snr: hdr.snr });
+
+          // While keyed: keep the Opus payload, undecoded, and hold the peak.
+          // Undecoded is the whole reason a long list is affordable — the
+          // metering above needs 21 bytes, not a decoder per receiver.
+          const rec = recording.current;
+          if (!rec.active) return;
+          const slot = rec.byHost.get(rx.host);
+          if (!slot) return;
+
+          const payload = new Uint8Array(ev.data, HEADER_BYTES);
+          if (payload.length > 0) slot.frames.push(payload.slice());
+          slot.sampleRate = hdr.sampleRate || slot.sampleRate;
+          if (hdr.snr != null) {
+            slot.peakSnr = slot.peakSnr == null ? hdr.snr : Math.max(slot.peakSnr, hdr.snr);
+            slot.snrCount++;
+          }
         };
         ws.onerror = () => setReading(rx.host, { state: 'error' });
         ws.onclose = () => setReading(rx.host, { state: 'closed' });
@@ -166,6 +224,82 @@ function UbersdrPanel({ api }) {
       }
     } finally { setBusy(false); }
   }, [api, radio, wall, disconnectAll, setReading]);
+
+  // ---- recording, bracketed by the key -----------------------------------
+
+  const startRecording = useCallback(() => {
+    const rec = recording.current;
+    rec.byHost = new Map();
+    for (const host of sockets.current.keys())
+      rec.byHost.set(host, { frames: [], sampleRate: 48000, peakSnr: null, snrCount: 0 });
+    rec.active = true;
+    rec.startedAt = Date.now();
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    const rec = recording.current;
+    if (!rec.active) return;
+    rec.active = false;
+
+    const seconds = (Date.now() - rec.startedAt) / 1000;
+    const rows = [...rec.byHost.entries()]
+      .map(([host, slot]) => ({
+        host,
+        frames: slot.frames,
+        sampleRate: slot.sampleRate,
+        peakSnr: slot.peakSnr,
+        bytes: slot.frames.reduce((n, f) => n + f.length, 0),
+      }))
+      .filter((r) => r.frames.length > 0);
+
+    if (rows.length === 0) return;
+    setTakes((prev) => [{ at: new Date(), seconds, rows }, ...prev].slice(0, 8));
+  }, []);
+
+  // ---- playback ------------------------------------------------------------
+
+  const stopPlayback = useCallback(() => {
+    const a = audio.current;
+    try { a.source?.stop(); } catch { /* already stopped */ }
+    a.source = null;
+    setPlaying(null);
+  }, []);
+
+  const play = useCallback(async (take, row) => {
+    stopPlayback();
+    const Decoder = OpusDecoder();
+    if (!Decoder) { setMessage({ bad: true, text: 'the Opus decoder did not load' }); return; }
+
+    setPlaying(row.host);
+    try {
+      // Decode on demand, one receiver at a time. This is the only place a
+      // decoder runs — never while the operator is keyed, and never once per
+      // receiver at the same time.
+      const decoder = new Decoder();
+      await decoder.ready;
+      const { channelData, samplesDecoded, sampleRate } = await decoder.decodeFrames(row.frames);
+      decoder.free();
+
+      if (!samplesDecoded) { setMessage({ bad: true, text: 'nothing decodable in that recording' }); setPlaying(null); return; }
+
+      audio.current.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = audio.current.ctx;
+      if (ctx.state === 'suspended') await ctx.resume();
+
+      const buf = ctx.createBuffer(channelData.length, samplesDecoded, sampleRate);
+      channelData.forEach((ch, i) => buf.copyToChannel(ch, i));
+
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.onended = () => setPlaying((cur) => (cur === row.host ? null : cur));
+      src.start();
+      audio.current.source = src;
+    } catch (e) {
+      setMessage({ bad: true, text: 'playback failed: ' + e });
+      setPlaying(null);
+    }
+  }, [stopPlayback]);
 
   // Never leave sockets open on someone else's receiver.
   useEffect(() => () => disconnectAll(), [disconnectAll]);
@@ -175,10 +309,12 @@ function UbersdrPanel({ api }) {
   return h('div', { style: css.panel },
 
     h('div', { style: css.note },
-      'Remote receivers listening to your transmit frequency. The figure is '
-      + 'signal-to-noise in dB at each receiver — compare a receiver against '
-      + 'itself over time, not receivers against each other, since a quiet site '
-      + 'reads better than a noisy one for the same signal.'),
+      'Remote receivers listening to your transmit frequency. Each records while '
+      + 'you are keyed and can be played back after you unkey — never during, so '
+      + 'an open microphone cannot feed back. The figure is signal-to-noise in dB '
+      + 'at that receiver: compare a receiver against itself over time, not '
+      + 'receivers against each other, since a quiet site reads better than a '
+      + 'noisy one for the same signal.'),
 
     h('div', { style: css.head },
       h('span', { style: css.freq },
@@ -207,6 +343,36 @@ function UbersdrPanel({ api }) {
 
     h('div', { style: css.grid },
       wall.map((rx) => h(Tile, { key: rx.host, rx, reading: readings[rx.host] }))),
+
+    takes.length
+      ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('div', { style: { ...css.note, textTransform: 'uppercase', letterSpacing: '.1em' } },
+            'recordings'),
+          takes.map((take, ti) =>
+            h('div', {
+              key: take.at.getTime(),
+              style: { border: '1px solid var(--border, #2a2e35)', borderRadius: 3, padding: '8px 10px',
+                       display: 'flex', flexDirection: 'column', gap: 5 },
+            },
+              h('div', { style: css.note },
+                `${take.at.toLocaleTimeString()} · ${take.seconds.toFixed(1)} s`
+                + (ti === 0 ? ' · latest' : '')),
+              h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                take.rows.map((row) =>
+                  h('button', {
+                    key: row.host,
+                    style: {
+                      ...css.button,
+                      borderColor: playing === row.host ? 'var(--success, #4fbfa0)' : undefined,
+                    },
+                    onClick: () => (playing === row.host ? stopPlayback() : play(take, row)),
+                  },
+                    `${row.host.split('.')[0]} · `,
+                    // The peak across the whole over, not an instantaneous
+                    // reading arriving seconds after the speech that caused it.
+                    row.peakSnr == null ? '— dB' : `${row.peakSnr.toFixed(0)} dB`,
+                    playing === row.host ? ' ■' : ' ▶'))))))
+      : null,
 
     info
       ? h('div', { style: css.note },

@@ -87,6 +87,15 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
             });
         });
 
+        // Keying only, polled at 10 Hz by the panel. One upstream call, so a
+        // transmission is bracketed to about a tenth of a second without making
+        // twenty engine requests a second for a boolean.
+        endpoints.MapGet("ptt", async (CancellationToken ct) =>
+        {
+            var keyed = await _radio!.ReadMoxAsync(ct).ConfigureAwait(false);
+            return Results.Ok(new { available = keyed is not null, keyed = keyed ?? false });
+        });
+
         // Receivers worth offering for the band the operator is on.
         endpoints.MapGet("receivers", async (int? count, CancellationToken ct) =>
         {
