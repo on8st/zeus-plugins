@@ -213,6 +213,15 @@ public sealed class FakeWavelogServer : IDisposable
         var from = ReadInt(json["fetchfromid"]) ?? 0;
         var limit = ReadInt(json["limit"]) ?? 500;
         var stationIds = ReadStationIds(json["station_id"]);
+
+        // A real instance refuses an empty selection rather than treating it as
+        // "everything". The fake used to treat empty as no filter, which made a
+        // misconfigured pull look like it worked.
+        if (stationIds.Count == 0)
+        {
+            Reply(ctx, 200, Fail("\\\"station_id\\\" must not be empty"));
+            return;
+        }
         var qslFilter = json["qsl_filter"]?.AsArray()?.Select(n => n!.GetValue<string>()).ToList();
 
         List<Row> selected;

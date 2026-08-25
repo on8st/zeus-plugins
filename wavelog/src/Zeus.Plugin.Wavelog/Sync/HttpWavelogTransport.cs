@@ -57,9 +57,9 @@ public sealed class HttpWavelogTransport(HttpClient http) : IWavelogTransport
         var body = new Dictionary<string, object?>
         {
             ["key"] = config.ApiKey,
-            ["station_id"] = config.PullStationIds.Count > 0
-                ? config.PullStationIds.Select(i => i.ToString(CultureInfo.InvariantCulture)).ToArray()
-                : new[] { config.StationProfileId.ToString(CultureInfo.InvariantCulture) },
+            // Never the raw list: it may be empty, and Wavelog refuses that.
+            ["station_id"] = config.EffectivePullStationIds
+                .Select(i => i.ToString(CultureInfo.InvariantCulture)).ToArray(),
             ["fetchfromid"] = fetchFromId,
             ["limit"] = limit,
             ["output_format"] = "adif",

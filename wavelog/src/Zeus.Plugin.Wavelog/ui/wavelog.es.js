@@ -234,6 +234,15 @@ function WavelogPanel({ api }) {
       }),
     }),
 
+    status && status.pullLocationsAreImplicit
+      ? h('div', { style: { ...css.note, color: 'var(--warning, #d8a657)', lineHeight: 1.5 } },
+          'No pull location chosen, so contacts are being imported from location '
+          + (status.pullStationIds || []).join(', ')
+          + ' \u2014 the one being pushed to. Wavelog will not accept an empty '
+          + 'selection, so this is a fallback, not "everything". Set it explicitly '
+          + 'if you meant somewhere else.')
+      : null,
+
     h('div', { style: css.row },
       h('button', { style: css.button, disabled: busy, onClick: fetchProfiles },
         'list locations this key can reach'),

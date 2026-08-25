@@ -27,5 +27,26 @@ public sealed record WavelogConfig
 
     public bool IsUsable => !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);
 
+    /// <summary>
+    /// The locations actually pulled from.
+    ///
+    /// <para>An empty selection is the default, and it cannot be sent as-is:
+    /// Wavelog refuses it outright with <c>"station_id" must not be empty</c>.
+    /// So an empty list falls back to the location we push to, which is almost
+    /// always what an operator who filled in one field and not the other
+    /// meant.</para>
+    ///
+    /// <para>The fallback is fine; doing it <em>quietly</em> is not. Until this
+    /// existed the plugin pulled from a location the status endpoint never
+    /// mentioned — on a live install that meant importing the operator's real
+    /// log while the panel displayed an empty list. Everything that reports
+    /// configuration reports this, not the raw field.</para>
+    /// </summary>
+    public IReadOnlyList<int> EffectivePullStationIds =>
+        PullStationIds.Count > 0 ? PullStationIds : [StationProfileId];
+
+    /// <summary>True when the pull is running against a fallback rather than an explicit choice.</summary>
+    public bool PullLocationsAreImplicit => PullEnabled && PullStationIds.Count == 0;
+
     public string Endpoint(string name) => $"{BaseUrl.TrimEnd('/')}/index.php/api/{name}";
 }

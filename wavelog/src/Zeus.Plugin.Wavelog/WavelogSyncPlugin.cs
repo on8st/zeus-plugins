@@ -329,8 +329,13 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
                 cursor = _cursors?.GetFetchFromId() ?? 0,
                 // Naming the profiles turns "why isn't that contact here" into a
                 // glance rather than an investigation.
-                pullStationIds = c.PullStationIds,
+                // The effective list, not the raw field. An empty selection
+                // falls back to the push location, and reporting the empty field
+                // would tell the operator we were pulling from nowhere while we
+                // imported a whole logbook.
+                pullStationIds = c.EffectivePullStationIds,
                 pushStationProfileId = c.StationProfileId,
+                pullLocationsAreImplicit = c.PullLocationsAreImplicit,
             });
         });
 
