@@ -63,6 +63,32 @@ public sealed class ZeusLogbookDb : IDisposable
     public static ZeusLogbookDb ForDataDirectory(string dataDirectory)
         => new(Path.Combine(dataDirectory, FileName));
 
+    /// <summary>
+    /// Is there a logbook here at all?
+    ///
+    /// <para>The Zeus logbook is a <em>plugin</em> — <c>org.openhpsdr.logbook</c>
+    /// — not something the engine provides. With it uninstalled the engine
+    /// creates no <c>zeus-logbook.db</c> and serves no logbook route; verified
+    /// against a bare engine and against a live install.</para>
+    ///
+    /// <para>So the file's absence means the operator has no logbook backend,
+    /// which is a different thing from an empty log and needs a different
+    /// message. We must also not <em>create</em> it: LiteDB would happily make
+    /// one, and then this looks like a logbook that simply has no QSOs in it —
+    /// a contented, permanently idle sync with nothing to say for itself.</para>
+    /// </summary>
+    public static bool ExistsIn(string dataDirectory)
+        => File.Exists(Path.Combine(dataDirectory, FileName));
+
+    /// <summary>
+    /// What to tell the operator when there is no logbook to attach to. Names the
+    /// plugin, because "install the logbook" is not actionable and this is.
+    /// </summary>
+    public const string NoLogbookMessage =
+        "no Zeus logbook found (" + FileName + " does not exist). The logbook is a " +
+        "plugin, not part of the engine: install \"Zeus Logbook\" (org.openhpsdr.logbook) " +
+        "from the plugin registry. Nothing will sync until it is there.";
+
     public ZeusLogbookDb(string path)
     {
         var dir = Path.GetDirectoryName(path);

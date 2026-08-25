@@ -31,6 +31,9 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
     private const string ConfigKey = "wavelog.config";
 
     private ZeusLogbookDb? _logbook;
+    private string _dataDirectory = "";
+    private IWavelogTransport? _transport;
+    private bool _saidNoLogbook;
     private LiteDbOutbox? _outbox;
     private LiteDbCursorStore? _cursors;
     private WavelogSyncService? _sync;
@@ -69,9 +72,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
             ? context.PluginRootPath
             : context.HostDataDirectory;
 
-        // The operator's own logbook, in shared mode so the native plugin and
-        // this one see each other's writes.
-        _logbook = ZeusLogbookDb.ForDataDirectory(data);
+        _dataDirectory = data;
 
         // Ours alone, kept beside it rather than inside it.
         var mine = Path.Combine(data, "wavelog-plugin");
@@ -83,22 +84,60 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         _configReadUtc = DateTime.UtcNow;
 
         var transport = new HttpWavelogTransport(_http);
-        _sync = new WavelogSyncService(_logbook, _outbox, transport, CurrentConfig, _cursors, _log);
+        _transport = transport;
         _pump = new OutboxPump(_outbox, transport, CurrentConfig, RetryPolicy.Default, _log);
-        _pump.Delivered += id => _logbook?.MarkPushed(id);
-        _pump.DeadLettered += (id, reason) => _logbook?.MarkPushFailed(id, reason);
-
         if (context.Radio is { } radio)
             _radio = new RadioStatePublisher(radio, transport, CurrentConfig, SystemClock.Instance, "Zeus", _log);
 
         _background = new CancellationTokenSource();
         StartBackground(_background.Token);
 
-        if (_logbook.Verify() is { } problem)
-            _log.LogError("wavelog: {Problem}", problem);
+        TryAttachLogbook();
+    }
 
-        _log.LogInformation("wavelog: attached to the native logbook ({Count} QSOs), configured={Configured}",
+    /// <summary>
+    /// Attach to the operator's logbook, if there is one yet.
+    ///
+    /// <para>The Zeus logbook is a plugin — <c>org.openhpsdr.logbook</c> — and a
+    /// fresh Zeus has no plugins at all: verified against a live install, whose
+    /// engine reports <c>{"plugins":[]}</c> and serves no logbook route. So this
+    /// plugin can perfectly well start before the thing it synchronises exists,
+    /// and must handle that as a state rather than an error.</para>
+    ///
+    /// <para>Two rules. We never <em>create</em> <c>zeus-logbook.db</c> — LiteDB
+    /// would happily make one, and an empty file we made ourselves is
+    /// indistinguishable from a logbook the operator has not written to yet, so
+    /// the plugin would sit there looking healthy and syncing nothing. And we
+    /// keep trying, because the operator may install the logbook at any moment
+    /// and should not have to restart the engine afterwards.</para>
+    /// </summary>
+    private bool TryAttachLogbook()
+    {
+        if (_logbook is not null) return true;
+
+        if (!ZeusLogbookDb.ExistsIn(_dataDirectory))
+        {
+            if (!_saidNoLogbook)
+            {
+                _log?.LogError("wavelog: {Message}", ZeusLogbookDb.NoLogbookMessage);
+                _saidNoLogbook = true;      // once, not every thirty seconds
+            }
+            return false;
+        }
+
+        _logbook = ZeusLogbookDb.ForDataDirectory(_dataDirectory);
+        _sync = new WavelogSyncService(_logbook, _outbox!, _transport!, CurrentConfig, _cursors!, _log);
+        _pump!.Delivered += id => _logbook?.MarkPushed(id);
+        _pump.DeadLettered += (id, reason) => _logbook?.MarkPushFailed(id, reason);
+
+        if (_logbook.Verify() is { } problem)
+            _log?.LogError("wavelog: {Problem}", problem);
+
+        _saidNoLogbook = false;
+        _log?.LogInformation(
+            "wavelog: attached to the native logbook ({Count} QSOs), configured={Configured}",
             _logbook.Count(), _config.IsUsable);
+        return true;
     }
 
     private void StartBackground(CancellationToken ct)
@@ -121,6 +160,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         {
             try
             {
+                if (!TryAttachLogbook()) { await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false); continue; }
                 _sync!.EnqueueNewLocalQsos();
                 await _sync.PullNewAsync(ct).ConfigureAwait(false);
                 if (DateTime.UtcNow - lastSweep > TimeSpan.FromHours(12))
@@ -269,6 +309,8 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
             return Results.Ok(new
             {
                 configured = c.IsUsable,
+                logbookInstalled = _logbook is not null,
+                logbookProblem = _logbook is null ? ZeusLogbookDb.NoLogbookMessage : _logbook.Verify(),
                 qsosInLogbook = _logbook?.Count() ?? 0,
                 pending = _outbox?.PendingCount ?? 0,
                 failed = _outbox?.DeadLetterCount ?? 0,
@@ -295,6 +337,8 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         endpoints.MapPost("resync", async (JsonNode? body, CancellationToken ct) =>
         {
             var dryRun = body?["dryRun"]?.GetValue<bool>() ?? true;   // dry run is the default path
+            if (!TryAttachLogbook())
+                return Results.BadRequest(new { error = ZeusLogbookDb.NoLogbookMessage });
             var report = await _sync!.ResyncAsync(dryRun, ct).ConfigureAwait(false);
             return report.Ran
                 ? Results.Ok(new { report.DryRun, report.MissingHere, report.MissingThere })
