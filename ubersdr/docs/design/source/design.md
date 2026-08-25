@@ -1,86 +1,107 @@
 # UberSDR — design notes
 
-Nothing is decided. This records what has been **verified** and what is merely
-assumed, because in this repository the assumptions have been the bugs.
+Scope set by the operator: **receive only**, against the **public** instance
+network. Transport was left to me. This records what was verified and what it
+rules out, because the verification changed the answer.
 
-## 1. What UberSDR is
+## 1. What was checked, and how
 
-A web-based SDR platform built on `ka9q-radio`, running on RX-888 MkII plus
-generic PC hardware, with a network of public receivers serving 20–200
-simultaneous listeners each. Source at `madpsy/ka9q_ubersdr`.
+UberSDR is a `ka9q-radio`-based platform (RX-888 MkII + generic PC) with a public
+receiver network. It advertises an unusual number of integration surfaces: REST
+and WebSocket, an HPSDR bridge, KiwiSDR emulation on 8073, RTL-TCP on 1234, TCI,
+rigctl/flrig, SoapySDR, MQTT.
 
-**Verified from the project's own site**, not from memory. It exposes an unusual
-number of integration surfaces:
+That list is what made this look easy — Zeus is *itself* an OpenHPSDR client and
+already ships TCI and a `KiwiSdrService`. Three surfaces Zeus speaks natively.
 
-| Surface | Notes |
+So the obvious plan was: point Zeus's existing KiwiSDR client at an UberSDR
+instance on 8073 and write no transport code at all.
+
+**The directory API says otherwise.** `GET https://instances.ubersdr.org/api/instances`
+is public, unauthenticated JSON — 54 instances, 53 online at the time of
+checking. Across all of them:
+
+| | |
 |---|---|
-| REST + WebSocket | "Frontend is entirely API driven"; spectrum and decoded data available via API |
-| **HPSDR protocol** | via a bridge application (SparkSDR, Thetis compatible) |
-| **KiwiSDR emulation** | port 8073, any KiwiSDR client |
-| RTL-TCP emulation | port 1234 |
-| TCI | network CAT + audio |
-| rigctl / flrig / OmniRig | CAT control |
-| SoapySDR driver | authenticated, wide IQ |
-| MQTT + Prometheus | metrics and decoder data |
+| Ports advertised | `443` ×49, `80` ×2, `9080`, `8080`, `9443` |
+| Advertising **8073** | **none** |
+| TLS | 50 of 54 |
+| `cors_enabled` | **false on all 54** |
+| `public_iq_modes` | every instance offers at least `iq48` |
 
-## 2. The awkward fact: Zeus may already connect
+Public access is UberSDR's own HTTPS/WebSocket protocol through
+`*.tunnel.ubersdr.org` or an operator's own host. The KiwiSDR emulation is
+documented against `ubersdr.local` — mDNS, local network — and **no public
+instance exposes it**. So the free ride does not exist.
 
-Zeus is **itself an OpenHPSDR Protocol 1/2 client** — that is what the engine is.
-And it already ships:
+## 2. What that rules out
 
-- **TCI** — 33 source files, with persisted runtime config
-- **KiwiSDR** — `KiwiSdrService`, a hosted service, with config taking
-  `host:8073`
+**Audio from a public UberSDR instance cannot reach Zeus's receive chain.** Three
+independent reasons, any one sufficient:
 
-So three of UberSDR's integration surfaces are ones Zeus speaks natively,
-without any plugin. Before writing code, the first job is to find out whether
-**Zeus can already receive from an UberSDR instance today** by pointing its
-KiwiSDR client at port 8073, or its TCI client at the CAT/audio port, or by
-running the HPSDR bridge.
+1. The only public transport is UberSDR's own WebSocket protocol. Zeus does not
+   speak it.
+2. No public instance exposes a transport Zeus *does* speak — no 8073, no raw
+   HPSDR, no TCI.
+3. **A plugin cannot be a receiver source.** `IAudioPlugin` processes an insert
+   chain, input to output. `IRxAudioTapPlugin` is explicitly *"a read-only,
+   non-destructive tap"* that *"produces no output"*. Nothing in the contracts
+   introduces audio or IQ into the RX path; radio sources are engine-level.
 
-If it can, a plugin that transports audio or IQ is redundant. That question is
-answerable in an afternoon with a public UberSDR instance and no code at all.
+Point (3) is the one that matters, because it holds even if a transport existed.
+Making Zeus listen to UberSDR is an **engine** feature — a client for
+`iq48` alongside the existing HPSDR and Kiwi services — not something a plugin
+can do. If that is the real goal, the route is a feature request upstream, not
+this repository.
 
-## 3. What the plugin surface can and cannot do
+## 3. What is actually worth building
 
-Read from `Zeus.Plugins.Contracts`, not assumed:
+The directory API is rich, and the interesting content is not audio:
 
-`IPluginContext` offers `PluginId`, `Logger`, `PluginRootPath`,
-`HostDataDirectory`, `Settings`, and `Radio` — frequency, mode, MOX, each
-readable with a change event. Plus `IBackendPlugin` (HTTP routes), `IUiPlugin`
-(panels), and the audio interfaces.
+```
+callsign, name, location, lat/lon, maidenhead, country
+distance, bearing_degrees            ← relative to the caller
+snr_0_30_mhz, snr_1_8_30_mhz, noise_floor
+digital_decodes, cw_skimmer, dsp_enabled, tdoa_enabled
+max_clients, available_clients, peak_users, is_online, load_status
+public_url, host, port, tls
+pskreporter_rank
+```
 
-**There is no spot ingestion API.** `Spot` appears nowhere in the contracts, so a
-plugin cannot feed Zeus's `SpotManager` — which rules out the otherwise obvious
-idea of piping UberSDR's WSJT-X skimmer decodes in as spots. Worth confirming
-with upstream before designing around it.
+plus `/api/ionosonde/mufd.geojson` and `/api/ionosonde/stations.json` for
+propagation.
 
-**A plugin cannot retune the radio.** `Radio` exposes frequency and mode as
-*readable* state with events; nothing in the contracts sets them.
+**Proposal: a receiver-conditions panel, not a receiver.**
 
-Those two limits shape everything: a plugin here can *observe* Zeus, *talk to the
-network*, *store settings* and *draw a panel*. It cannot drive the radio or feed
-the spot pipeline.
+What makes it a Zeus plugin rather than a browser bookmark is the one thing
+`IPluginContext` *does* give us: `Radio.FrequencyChanged` and `Band`. The panel
+knows what band the operator is on and answers *"who near me is hearing this
+band right now, and how well"* — sorted by distance, filtered to instances with
+capacity, showing SNR and noise floor. One click opens the receiver in a browser
+for actual listening.
 
-## 4. Candidate shapes, none chosen
+That is honest about the limit rather than working around it: Zeus stays the
+radio, UberSDR stays the wide-area ears, and the plugin is the thing that
+connects what you are doing to what is being heard elsewhere.
 
-- **Receiver browser.** A tools panel listing the public UberSDR network, with
-  band/mode/quality, and one-click configuration of whichever transport Zeus
-  ends up using. Plays to what the plugin surface is actually good at.
-- **Decoded-data viewer.** UberSDR's skimmer output over REST/MQTT, shown in a
-  panel. Additive precisely *because* it cannot become spots.
-- **Bridge supervisor.** If the HPSDR bridge is the route, a plugin that manages
-  and monitors it rather than reimplementing it.
-- **Nothing.** If Zeus already connects natively and the browsing is comfortable
-  on ubersdr.org, the honest answer may be that no plugin is warranted.
+**The fetching must happen in the backend, not the panel.** `cors_enabled` is
+false on every instance, so browser-side requests to per-instance APIs are
+blocked. `IBackendPlugin` routes have no such restriction — a point in favour of
+the split the framework already encourages.
 
-## 5. Open questions
+## 4. Open questions
 
-1. Which transport does Stan actually want — HPSDR bridge, KiwiSDR emulation,
-   TCI, or REST/WebSocket?
-2. Does Zeus's existing KiwiSDR client already work against UberSDR's port 8073?
-3. Is this for *his own* UberSDR instance, or for browsing the public network?
-4. Receive only, or does transmit/CAT matter?
-5. Is there a spot-ingestion route for plugins that the contracts do not show?
+1. Is the receiver-conditions framing what is wanted, or was in-Zeus listening
+   the point? If the latter, this belongs upstream as an engine feature and this
+   directory should be closed.
+2. Directory only, or per-instance data too — the richer fields (spectrum,
+   decodes) come from each instance's own API, 54 different hosts, none
+   CORS-enabled and each with its own load limits.
+3. Politeness: `/api/instances` is 638 KB. Cache it, poll it slowly, and honour
+   `available_clients` before suggesting a receiver.
 
-Nothing gets built until 1 and 2 are answered — 2 is a test, not a discussion.
+## 5. Not verified
+
+- Whether per-instance APIs need auth, and what they expose.
+- Whether the directory API is intended for third-party use or merely happens to
+  be reachable. **Ask before shipping anything that polls it.**
