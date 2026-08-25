@@ -24,6 +24,7 @@ if (!modulePath) { console.error('usage: check.mjs <ui/panel.es.js>'); process.e
 const hooks = [];
 let cursor = 0;
 let dirty = false;
+let everChanged = false;
 const effects = [];
 
 const React = {
@@ -43,7 +44,7 @@ const useState = (init) => {
   if (!(i in hooks)) hooks[i] = typeof init === 'function' ? init() : init;
   const set = (v) => {
     const next = typeof v === 'function' ? v(hooks[i]) : v;
-    if (!Object.is(next, hooks[i])) { hooks[i] = next; dirty = true; }
+    if (!Object.is(next, hooks[i])) { hooks[i] = next; dirty = true; everChanged = true; }
   };
   return [hooks[i], set];
 };
@@ -126,6 +127,8 @@ const FIXTURES = {
               splitTxHz: 0, moxOn: false, transmitHz: 7125000, band: '40m' },
   '/ptt': { available: true, keyed: false },
   '/config': { homeGrid: 'JO21ha', selectedHosts: [], preset: 'spread', count: 6 },
+  '/engine': { available: true, port: 6060, wsUrl: 'ws://127.0.0.1:6060/ws' },
+  '/connect': { sessionId: 'test', wsBase: 'wss://rx.example', version: 2 },
   '/receivers': {
     fetchedUtc: new Date().toISOString(), total: 54,
     excludedNoAntenna: 2, excludedFull: 0, offline: 1, excludedByLimits: 0,
@@ -182,6 +185,9 @@ await unlink(tmp).catch(() => {});
 
 // Report what state it actually reached, so a check that quietly renders the
 // empty view forever cannot look like a pass.
-const loaded = hooks.some((v) => Array.isArray(v) && v.length > 0);
+// "Left the empty state" means some piece of state actually changed — not that
+// an array filled up, which was true of one panel and false of another that was
+// working perfectly.
+const loaded = everChanged;
 console.log(`ok    panel '${registered.id}' rendered, effects ran, unmounted`
   + (loaded ? ' — reached a loaded state' : ' — WARNING: never left the empty state'));

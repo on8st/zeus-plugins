@@ -197,6 +197,18 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
             return Results.Ok(new { ok = true });
         });
 
+        // Where the engine's own websocket is. The panel cannot work this out:
+        // its page is served by the product on another origin and the engine's
+        // port is assigned at launch. The plugin runs inside the engine, so it
+        // simply knows.
+        endpoints.MapGet("engine", () =>
+        {
+            var port = EngineRadio.DiscoverPort();
+            return port == 0
+                ? Results.Ok(new { available = false })
+                : Results.Ok(new { available = true, port, wsUrl = $"ws://127.0.0.1:{port}/ws" });
+        });
+
         endpoints.MapGet("status", async (CancellationToken ct) =>
         {
             var r = await _radio!.ReadAsync(ct).ConfigureAwait(false);

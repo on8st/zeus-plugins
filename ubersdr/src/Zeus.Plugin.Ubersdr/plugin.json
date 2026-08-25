@@ -4,7 +4,7 @@
   "name": "UberSDR Monitor",
   "version": "0.1.0",
   "author": "on8st",
-  "description": "A wall of public UberSDR receivers listening to your transmission. Shows a live signal-to-noise figure from each while you are keyed. It is not a receiver: audio never enters the Zeus DSP chain, and nothing is played while you transmit.",
+  "description": "Remote UberSDR receivers, two ways. QSO Assist puts your own radio in the left ear and whichever remote station copies the frequency best in the right, choosing and re-choosing on its own. The map shows where you are being heard while you transmit, with a recording from each receiver. Audio never enters the Zeus DSP chain.",
   "homepage": "https://github.com/on8st/zeus-plugins",
   "license": "GPL-2.0-or-later",
   "sdk": {
@@ -23,12 +23,20 @@
   },
   "ui": {
     "modules": [
-      "ui/ubersdr.es.js"
+      "ui/ubersdr.es.js",
+      "ui/qso-assist.js"
     ],
     "panels": [
       {
+        "id": "ubersdr.qso",
+        "title": "QSO Assist",
+        "icon": "Headphones",
+        "slot": "workspace.tools",
+        "category": "tools"
+      },
+      {
         "id": "ubersdr.monitor",
-        "title": "UberSDR Monitor",
+        "title": "UberSDR Map",
         "icon": "Radio",
         "slot": "workspace.tools",
         "category": "tools"

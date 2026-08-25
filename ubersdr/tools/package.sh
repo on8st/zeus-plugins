@@ -42,8 +42,12 @@ rm -f "$ZIP"
 # in the component — is a ReferenceError on first render, which reaches the
 # operator as "one of the panels failed to render" and nothing else.
 if command -v node >/dev/null 2>&1; then
-  for panel in "$BUILD"/ui/*.es.js; do
+  # Every panel module, not just *.es.js — a second panel added under another
+  # name would otherwise ship unchecked, which is exactly what happened.
+  # vendor/ is excluded: those are libraries, not panels.
+  for panel in "$BUILD"/ui/*.js; do
     [ -e "$panel" ] || continue
+    grep -q "export default function register" "$panel" || continue
     node "$PLUGIN_DIR/tools/panel-check/check.mjs" "$panel" || {
       echo "ERROR: the panel does not render; refusing to package" >&2; exit 1; }
   done

@@ -39,20 +39,30 @@ public class ScaffoldTests
     }
 
     [Fact]
-    public void The_panel_id_matches_what_the_module_registers()
+    public void Every_declared_panel_is_registered_by_some_module()
     {
-        // A mismatch here means the panel silently never appears — the failure
-        // mode that a packaging test caught once already in this repository.
-        var panelId = Manifest().RootElement.GetProperty("ui")
-            .GetProperty("panels").EnumerateArray().First().GetProperty("id").GetString()!;
-
+        // A panel declared in the manifest but registered nowhere silently never
+        // appears — the failure mode a packaging test caught once already. With
+        // two panels across two modules, the invariant is that each id is
+        // claimed by one of them, not that the first module claims the first id.
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
-        var module = File.ReadAllText(Path.Combine(
-            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+        var ui = Path.Combine(dir!.FullName, "src", "Zeus.Plugin.Ubersdr");
 
-        Assert.Contains($"id: '{panelId}'", module);
-        Assert.Contains("export default function register", module);
+        var manifest = Manifest().RootElement.GetProperty("ui");
+        var modules = manifest.GetProperty("modules").EnumerateArray()
+            .Select(m => File.ReadAllText(Path.Combine(
+                ui, m.GetString()!.Replace('/', Path.DirectorySeparatorChar))))
+            .ToList();
+
+        Assert.All(modules, m => Assert.Contains("export default function register", m));
+
+        foreach (var panel in manifest.GetProperty("panels").EnumerateArray())
+        {
+            var id = panel.GetProperty("id").GetString()!;
+            Assert.True(modules.Any(m => m.Contains($"id: '{id}'", StringComparison.Ordinal)),
+                $"panel '{id}' is declared but no module registers it");
+        }
     }
 
     [Fact]
