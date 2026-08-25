@@ -34,25 +34,35 @@ Public access is UberSDR's own HTTPS/WebSocket protocol through
 documented against `ubersdr.local` — mDNS, local network — and **no public
 instance exposes it**. So the free ride does not exist.
 
-## 2. What that rules out
+## 2. What that rules out — and what it does not
 
-**Audio from a public UberSDR instance cannot reach Zeus's receive chain.** Three
-independent reasons, any one sufficient:
+**Audio cannot reach Zeus's DSP chain.** A plugin cannot be a receiver source:
+`IAudioPlugin` processes an insert chain, input to output, and
+`IRxAudioTapPlugin` is explicitly *"a read-only, non-destructive tap"* that
+*"produces no output"*. Nothing in the contracts introduces audio or IQ into the
+RX path. Making Zeus **demodulate** UberSDR is an engine feature — a client for
+`iq48` beside the existing HPSDR and Kiwi services — and belongs upstream.
 
-1. The only public transport is UberSDR's own WebSocket protocol. Zeus does not
-   speak it.
-2. No public instance exposes a transport Zeus *does* speak — no 8073, no raw
-   HPSDR, no TCI.
-3. **A plugin cannot be a receiver source.** `IAudioPlugin` processes an insert
-   chain, input to output. `IRxAudioTapPlugin` is explicitly *"a read-only,
-   non-destructive tap"* that *"produces no output"*. Nothing in the contracts
-   introduces audio or IQ into the RX path; radio sources are engine-level.
+**But the panel can listen.** UberSDR's own client connects over WebSocket —
+`wss://<host>/ws` for audio, `wss://<host>/ws/user-spectrum` for spectrum,
+decoded with `OpusDecoder` into an `AudioContext`. **WebSocket is not subject to
+CORS**, so a panel module can open those sockets directly, and open *several at
+once*.
 
-Point (3) is the one that matters, because it holds even if a transport existed.
-Making Zeus listen to UberSDR is an **engine** feature — a client for
-`iq48` alongside the existing HPSDR and Kiwi services — not something a plugin
-can do. If that is the real goal, the route is a feature request upstream, not
-this repository.
+So the honest statement of the limit is narrower than it first looked:
+
+| | |
+|---|---|
+| In Zeus's DSP chain — filters, NR, notch, recording | **no** |
+| Audible to the operator inside the Zeus window | **yes**, via the panel |
+| Several receivers simultaneously | **yes** — one socket each |
+| Spectrum from a remote receiver | **yes**, same route |
+| Retune Zeus's own radio | no — `Radio` is readable state only |
+| Feed Zeus's spot pipeline | no — no spot API in the contracts |
+
+That combination is what makes the interesting use cases possible: the plugin
+knows what the operator's radio is doing, and can listen to N remote receivers
+at once, but cannot pretend to be the radio.
 
 ## 3. What is actually worth building
 
@@ -91,9 +101,8 @@ the split the framework already encourages.
 
 ## 4. Open questions
 
-1. Is the receiver-conditions framing what is wanted, or was in-Zeus listening
-   the point? If the latter, this belongs upstream as an engine feature and this
-   directory should be closed.
+1. Which use cases to build first — see `use-cases.md`. In-Zeus *listening* is
+   possible via the panel; in-Zeus *demodulating* is not and belongs upstream.
 2. Directory only, or per-instance data too — the richer fields (spectrum,
    decodes) come from each instance's own API, 54 different hosts, none
    CORS-enabled and each with its own load limits.
