@@ -77,7 +77,16 @@ compatible with GPL-2.0-or-later, and vendorable. Current version 0.7.11.
 - Admission control (`POST /connection`) is where an instance enforces its client
   limit, so honouring a refusal is not optional politeness — it is the protocol.
 
-## Phase 1 — receiver picker and live SNR, no audio
+## Phase 1 — DONE. Receiver picker and live SNR, no audio
+
+Built, installed in a live Zeus, and confirmed by the operator: the panel picks
+six receivers spread around the compass, connects them, and shows a live
+signal-to-noise figure from each while the operator transmits. Two of the ten
+use cases ship on this alone.
+
+*(original scope below, for the record)*
+
+### Original scope
 
 The smallest useful thing, and half the machinery for everything after.
 
