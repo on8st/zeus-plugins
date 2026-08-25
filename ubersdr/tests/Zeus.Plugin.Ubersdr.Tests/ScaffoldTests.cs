@@ -149,6 +149,40 @@ public class ScaffoldTests
         Assert.Contains("stopLive();", module);   // starting one stops any other
     }
 
+    [Fact]
+    public void The_tile_layer_carries_its_attribution()
+    {
+        // OpenStreetMap's tiles are volunteer-funded and their usage policy asks
+        // for attribution and light use. Both are conditions of using them at
+        // all, so neither may be quietly dropped in a refactor.
+        var map = MapModule();
+        var panel = Panel();
+
+        Assert.Contains("OpenStreetMap contributors", map);
+        Assert.Contains("OSM_ATTRIBUTION", panel);
+        // Zoom 2 is twelve tiles for the inhabited world. A deeper zoom would
+        // multiply that by four for every level.
+        Assert.Contains("TILE_Z = 2", map);
+    }
+
+    [Fact]
+    public void The_vector_map_survives_as_an_offline_fallback()
+    {
+        // A panel that shows nothing when tiles fail is worse than one that
+        // never had them.
+        var panel = Panel();
+        Assert.Contains("onTileFail", panel);
+        Assert.Contains("COAST_PATH", panel);
+    }
+
+    private static string MapModule()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        return File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "map.js"));
+    }
+
     private static string Panel()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

@@ -11,20 +11,67 @@
 
 import { COASTLINE } from './vendor/coastline.js';
 
-export const MAP_W = 720;
-export const MAP_H = 360;
+// Web Mercator, because that is the projection the tiles are drawn in and a
+// map layer that does not match its basemap is worse than no basemap. The
+// previous equirectangular version is gone rather than kept as an option: two
+// projections would mean two sets of coordinates for everything drawn on top.
 
-// Equirectangular. Latitude is clipped: the 110m coastline runs to Antarctica,
-// and a map that spends a fifth of its height on ice nobody is listening from
-// wastes the space the receivers need.
+/** Zoom level of the tile layer. 2 is a 1024 px world in 16 tiles. */
+export const TILE_Z = 2;
+export const TILE_SIZE = 256;
+export const WORLD = TILE_SIZE * 2 ** TILE_Z;
+
+// Latitudes worth showing. Mercator runs to ±85° and nobody is listening from
+// the ice; cropping gives the inhabited world more of the panel.
 export const LAT_MAX = 78;
-export const LAT_MIN = -60;
+export const LAT_MIN = -58;
 
-export function project(lon, lat) {
-  const x = ((lon + 180) / 360) * MAP_W;
-  const y = ((LAT_MAX - lat) / (LAT_MAX - LAT_MIN)) * MAP_H;
+/** Normalised Mercator, 0..1 across the world. */
+function mercator(lon, lat) {
+  const x = (lon + 180) / 360;
+  const s = Math.sin((Math.max(-85, Math.min(85, lat)) * Math.PI) / 180);
+  const y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
   return [x, y];
 }
+
+const [, TOP] = mercator(0, LAT_MAX);
+const [, BOTTOM] = mercator(0, LAT_MIN);
+
+export const MAP_W = WORLD;
+export const MAP_H = WORLD * (BOTTOM - TOP);
+
+export function project(lon, lat) {
+  const [x, y] = mercator(lon, lat);
+  return [x * WORLD, (y - TOP) * WORLD];
+}
+
+/**
+ * The tiles covering the visible band, as {x, y, z, px, py, url}.
+ *
+ * Only the rows the crop actually shows are listed — twelve tiles for the
+ * inhabited world rather than the sixteen a full sphere would need. They are
+ * ordinary browser image loads, so the HTTP cache handles repeat views.
+ */
+export function tiles() {
+  const n = 2 ** TILE_Z;
+  const firstRow = Math.floor(TOP * n);
+  const lastRow = Math.min(n - 1, Math.ceil(BOTTOM * n) - 1);
+  const out = [];
+  for (let ty = firstRow; ty <= lastRow; ty++) {
+    for (let tx = 0; tx < n; tx++) {
+      out.push({
+        key: `${TILE_Z}/${tx}/${ty}`,
+        px: tx * TILE_SIZE,
+        py: ty * TILE_SIZE - TOP * WORLD,
+        url: `https://tile.openstreetmap.org/${TILE_Z}/${tx}/${ty}.png`,
+      });
+    }
+  }
+  return out;
+}
+
+/** Required wherever the tiles are shown. Not optional, and not small print. */
+export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
 
 /**
  * Coastline as SVG path data, computed once.

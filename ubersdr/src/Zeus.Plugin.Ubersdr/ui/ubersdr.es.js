@@ -16,7 +16,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 // UMD, imported for its side effect: in an ES module it takes the globalThis
 // branch and registers itself. Vendored — see vendor/README.md.
 import './vendor/opus-decoder.min.js';
-import { MAP_W, MAP_H, COAST_PATH, GRATICULE, project, deriveHome, greatCirclePath, gridToLatLon } from './map.js';
+import { MAP_W, MAP_H, COAST_PATH, GRATICULE, TILE_SIZE, tiles, OSM_ATTRIBUTION,
+         project, deriveHome, greatCirclePath, gridToLatLon } from './map.js';
 
 const h = React.createElement;
 
@@ -165,7 +166,7 @@ function Comparison({ takes, hosts }) {
 // is getting out is visible without reading a number. Nothing here is clickable
 // yet beyond selecting a receiver to listen to — the tiles remain the place to
 // operate, and the map is the place to see.
-function ReceiverMap({ home, receivers, readings, live, onLive, onNotConnected }) {
+function ReceiverMap({ home, receivers, readings, live, onLive, onNotConnected, basemap, onTileFail }) {
   if (!home) {
     return h('div', { style: css.note },
       'No position yet — the map needs at least one receiver with a known '
@@ -190,17 +191,33 @@ function ReceiverMap({ home, receivers, readings, live, onLive, onNotConnected }
       'aria-label': `World map of ${placed.length} remote receivers, with a great-circle path from the operator to each.`,
       style: { width: '100%', height: 'auto', display: 'block', borderRadius: 3 },
     },
-      // Sea, land, then grid. Filled land reads as a map; the hairline outline
-      // the first version drew read as a diagram.
       h('rect', { x: 0, y: 0, width: MAP_W, height: MAP_H, fill: 'var(--bg-2, #10161c)' }),
+
+      // OpenStreetMap tiles when they load, the vector coastline when they do
+      // not. The vector map is not a lesser fallback — it is what makes the
+      // panel work offline, and it is drawn underneath so a slow tile never
+      // shows a blank map.
       h('path', {
         d: COAST_PATH,
         fill: 'var(--bg-3, #232a31)',
         stroke: 'var(--fg-3, #5a5e66)',
         strokeWidth: 0.4,
         fillRule: 'evenodd',
-        opacity: 0.95,
+        opacity: basemap === 'osm' ? 0.9 : 0.95,
       }),
+
+      basemap === 'osm'
+        ? tiles().map((t) => h('image', {
+            key: t.key,
+            href: t.url,
+            x: t.px, y: t.py, width: TILE_SIZE, height: TILE_SIZE,
+            // Dimmed and desaturated: a street map at full strength competes
+            // with the paths drawn over it, which are the point of the picture.
+            opacity: 0.55,
+            style: { filter: 'grayscale(0.5)' },
+            onError: onTileFail,
+          }))
+        : null,
       h('path', {
         d: GRATICULE,
         fill: 'none',
@@ -255,7 +272,16 @@ function ReceiverMap({ home, receivers, readings, live, onLive, onNotConnected }
       // The operator last, so nothing hides it.
       h('circle', { cx: hx, cy: hy, r: 4.5, fill: 'none',
                     stroke: 'var(--fg, #e6e8ea)', strokeWidth: 1.6 }),
-      h('circle', { cx: hx, cy: hy, r: 1.6, fill: 'var(--fg, #e6e8ea)' })));
+      h('circle', { cx: hx, cy: hy, r: 1.6, fill: 'var(--fg, #e6e8ea)' }),
+
+      // Required whenever the tiles are shown, and drawn on the map rather than
+      // tucked away beside it.
+      basemap === 'osm'
+        ? h('text', {
+            x: MAP_W - 6, y: MAP_H - 6, textAnchor: 'end',
+            style: { fontSize: 10, fill: 'var(--fg-2, #9aa0a6)', opacity: 0.85 },
+          }, OSM_ATTRIBUTION)
+        : null));
 }
 
 function UbersdrPanel({ api }) {
@@ -623,6 +649,9 @@ function UbersdrPanel({ api }) {
   // hold; only the trigger differs.
   const [capturing, setCapturing] = useState(0);
   const [view, setView] = useState('map');
+  // Tiles by default, vector if they fail. One failure is enough: a map with
+  // three tiles loaded and nine missing is worse than no tiles at all.
+  const [basemap, setBasemap] = useState('osm');
   const [homeGrid, setHomeGrid] = useState('');
   const captureFor = useCallback(async (seconds) => {
     if (sockets.current.size === 0) {
@@ -737,6 +766,15 @@ function UbersdrPanel({ api }) {
         style: { ...css.button, borderColor: view === 'tiles' ? 'var(--accent, #4fbfa0)' : undefined },
         onClick: () => setView('tiles'),
       }, 'tiles'),
+      view === 'map'
+        ? h('button', {
+            style: css.button,
+            onClick: () => setBasemap(basemap === 'osm' ? 'plain' : 'osm'),
+            title: basemap === 'osm'
+              ? 'switch to the built-in vector map — works offline'
+              : 'switch to OpenStreetMap tiles',
+          }, basemap === 'osm' ? 'plain map' : 'street map')
+        : null,
       h('span', { style: css.note }, 'locator'),
       h('input', {
         style: { ...css.input, maxWidth: 88 },
@@ -762,6 +800,8 @@ function UbersdrPanel({ api }) {
           readings,
           live,
           onLive: (host) => (host ? startLive(host) : stopLive()),
+          basemap,
+          onTileFail: () => setBasemap('plain'),
           onNotConnected: () => setMessage({
             bad: true,
             text: 'that receiver is not connected yet — press "listen on '
