@@ -64,7 +64,7 @@ const snrPercent = (snr) => Math.max(0, Math.min(100, (snr / 60) * 100));
 const snrColour = (snr) =>
   snr >= 30 ? 'var(--success, #4fbfa0)' : snr >= 15 ? 'var(--warning, #d8a657)' : 'var(--danger, #e5715f)';
 
-function Tile({ rx, reading }) {
+function Tile({ rx, reading, live, onLive }) {
   const snr = reading?.snr ?? null;
   return h('div', { style: css.tile },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8 } },
@@ -83,13 +83,22 @@ function Tile({ rx, reading }) {
           transition: 'width .25s linear',
         },
       })),
-    h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
       h('span', { style: { fontFamily: 'var(--font-mono, ui-monospace, monospace)' } },
         snr == null ? '— dB' : `${snr.toFixed(1)} dB`),
-      h('span', { style: css.note },
-        reading?.state === 'open' ? 'listening'
-          : reading?.state === 'error' ? h('span', { style: css.bad }, 'failed')
-          : reading?.state ?? 'idle')));
+      reading?.state === 'open'
+        ? h('button', {
+            style: {
+              ...css.button, padding: '1px 7px', fontSize: 11,
+              borderColor: live ? 'var(--danger, #e5715f)' : undefined,
+              color: live ? 'var(--danger, #e5715f)' : undefined,
+            },
+            onClick: () => onLive(live ? null : rx.host),
+            title: live ? 'stop listening live' : 'listen live — headphones',
+          }, live ? '● live' : 'live')
+        : h('span', { style: css.note },
+            reading?.state === 'error' ? h('span', { style: css.bad }, 'failed')
+              : reading?.state ?? 'idle')));
 }
 
 // Antenna comparison.
@@ -201,6 +210,12 @@ function UbersdrPanel({ api }) {
     for (const ws of sockets.current.values()) { try { ws.close(); } catch { /* already gone */ } }
     sockets.current.clear();
     setReadings({});
+    // Releasing the receivers must silence live audio too, or the panel keeps
+    // a decoder alive feeding a stream that has stopped arriving.
+    const l = liveRef.current;
+    try { l.decoder?.free(); } catch { /* already freed */ }
+    liveRef.current = { decoder: null, nextAt: 0, host: null };
+    setLive(null);
   }, []);
 
   // Connect the whole wall. Admission goes through the backend so a refusal is
@@ -236,6 +251,14 @@ function UbersdrPanel({ api }) {
 
           setReading(rx.host, { snr: hdr.snr });
 
+          // Live monitoring, if this is the receiver being listened to. Runs
+          // whether or not a recording is in progress — the point of it is to
+          // hear the transmission as it happens.
+          if (liveRef.current.host === rx.host) {
+            const p = new Uint8Array(ev.data, HEADER_BYTES);
+            if (p.length > 0) playLiveFrame(rx.host, p);
+          }
+
           // While keyed: keep the Opus payload, undecoded, and hold the peak.
           // Undecoded is the whole reason a long list is affordable — the
           // metering above needs 21 bytes, not a decoder per receiver.
@@ -258,6 +281,74 @@ function UbersdrPanel({ api }) {
       }
     } finally { setBusy(false); }
   }, [api, radio, wall, disconnectAll, setReading]);
+
+  // ---- live monitoring, one receiver, opt-in ------------------------------
+  //
+  // Hearing yourself while you transmit. Two hazards, and neither is theoretical:
+  //
+  //   Feedback. Remote audio from the speakers with an open microphone is a
+  //   howl with seconds of internet latency in it, put on the air. Headphones
+  //   are not a suggestion here.
+  //
+  //   Delayed auditory feedback. Hearing your own voice a second or two late
+  //   disrupts fluent speech badly — it is a known effect, not a matter of
+  //   getting used to it. So this is genuinely useful for a tune-up carrier, CW,
+  //   or watching an amplifier, and genuinely unpleasant for talking.
+  //
+  // Hence: one receiver at a time, off unless asked for, and the panel says
+  // both of those things where the operator will read them.
+  const [live, setLive] = useState(null);            // host being monitored live
+  const liveRef = useRef({ decoder: null, nextAt: 0, host: null });
+
+  const stopLive = useCallback(() => {
+    const l = liveRef.current;
+    try { l.decoder?.free(); } catch { /* already freed */ }
+    l.decoder = null; l.host = null; l.nextAt = 0;
+    setLive(null);
+  }, []);
+
+  const startLive = useCallback(async (host) => {
+    stopLive();
+    const Decoder = OpusDecoder();
+    if (!Decoder) { setMessage({ bad: true, text: 'the Opus decoder did not load' }); return; }
+    try {
+      const decoder = new Decoder();
+      await decoder.ready;
+      audio.current.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.current.ctx.state === 'suspended') await audio.current.ctx.resume();
+      liveRef.current = { decoder, nextAt: 0, host };
+      setLive(host);
+    } catch (e) {
+      setMessage({ bad: true, text: 'could not start live monitoring: ' + e });
+    }
+  }, [stopLive]);
+
+  // Called per frame from the socket. Decodes one frame and schedules it back
+  // to back, so the stream paces itself rather than accumulating a lag.
+  const playLiveFrame = useCallback((host, payload) => {
+    const l = liveRef.current;
+    if (l.host !== host || !l.decoder) return;
+    const ctx = audio.current.ctx;
+    if (!ctx) return;
+    try {
+      const { channelData, samplesDecoded, sampleRate } = l.decoder.decodeFrame(payload);
+      if (!samplesDecoded) return;
+
+      const buf = ctx.createBuffer(channelData.length, samplesDecoded, sampleRate);
+      channelData.forEach((ch, i) => buf.copyToChannel(ch, i));
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+
+      // A small lead so scheduling jitter does not produce gaps; if we have
+      // fallen behind, restart from now rather than trying to catch up.
+      const lead = 0.12;
+      const now = ctx.currentTime;
+      if (l.nextAt < now + 0.01) l.nextAt = now + lead;
+      src.start(l.nextAt);
+      l.nextAt += buf.duration;
+    } catch { /* one bad frame must not stop the stream */ }
+  }, []);
 
   // ---- recording, bracketed by the key -----------------------------------
 
@@ -448,7 +539,26 @@ function UbersdrPanel({ api }) {
       message ? h('span', { style: message.bad ? css.bad : null }, message.text) : null),
 
     h('div', { style: css.grid },
-      wall.map((rx) => h(Tile, { key: rx.host, rx, reading: readings[rx.host] }))),
+      wall.map((rx) => h(Tile, {
+        key: rx.host, rx, reading: readings[rx.host],
+        live: live === rx.host,
+        onLive: (host) => (host ? startLive(host) : stopLive()),
+      }))),
+
+    live
+      ? h('div', {
+          style: {
+            border: '1px solid var(--danger, #e5715f)', borderRadius: 3,
+            padding: '8px 11px', ...css.note, lineHeight: 1.5,
+          },
+        },
+          h('b', { style: { color: 'var(--danger, #e5715f)' } }, 'Live monitoring is on. '),
+          'Use headphones: remote audio from your speakers with an open microphone '
+          + 'is a feedback howl, delayed by seconds, transmitted. And expect to hear '
+          + 'yourself one to two seconds late — that badly disrupts speaking, so this '
+          + 'is for a tune-up carrier, CW or watching an amplifier rather than for '
+          + 'talking.')
+      : null,
 
     takes.length
       ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },

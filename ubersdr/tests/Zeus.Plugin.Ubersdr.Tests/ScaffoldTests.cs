@@ -107,4 +107,37 @@ public class ScaffoldTests
         Assert.True(start >= 0, "keying must start recording");
         Assert.True(stop < start, "playback must be stopped before recording begins");
     }
+
+    [Fact]
+    public void Live_monitoring_warns_about_both_hazards()
+    {
+        // Feedback is the obvious one. Delayed auditory feedback is the one an
+        // operator will not anticipate: hearing your own voice a second or two
+        // late disrupts fluent speech badly, which is why this is for a carrier
+        // or CW rather than for talking. Both belong in front of the operator,
+        // not in a design document.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        var module = File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+
+        Assert.Contains("headphones", module, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("feedback howl", module, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("late", module, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Only_one_receiver_can_be_monitored_live()
+    {
+        // A decoder per receiver is what phase 2 exists to avoid, and six
+        // simultaneous live streams would be unintelligible anyway. The live
+        // state is a single host, not a set.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        var module = File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+
+        Assert.Contains("const [live, setLive] = useState(null)", module);
+        Assert.Contains("stopLive();", module);   // starting one stops any other
+    }
 }

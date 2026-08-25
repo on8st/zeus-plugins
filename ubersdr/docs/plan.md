@@ -125,7 +125,24 @@ of that over beside it. This was the actual requirement.
 
 Ships use case **1** — hear yourself as others hear you.
 
-## Phase 3 — live monitoring, opt-in
+## Phase 3 — BUILT. Live monitoring, opt-in
+
+Asked for after being argued against, and built. One receiver at a time, off
+unless chosen, with both hazards stated in the panel rather than in a document.
+
+The second hazard is the one worth recording, because it is not obvious: hearing
+your own voice one to two seconds late **disrupts fluent speech**, and that is a
+known effect rather than something to get used to. So live monitoring is genuinely
+useful for a tune-up carrier, CW, or watching an amplifier — and genuinely
+unpleasant for talking. The panel says exactly that.
+
+Streaming rather than batch: one decoder, `decodeFrame` per frame, buffers
+scheduled back to back with a 120 ms lead, restarting from now if it falls behind
+rather than accumulating lag.
+
+*(original scope below, for the record)*
+
+### Original scope
 
 A toggle for headphone users, with the reason stated in the panel rather than
 buried. Off by default, and it should stay off by default forever.
