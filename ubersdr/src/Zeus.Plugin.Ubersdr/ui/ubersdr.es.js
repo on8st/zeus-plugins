@@ -344,13 +344,31 @@ function UbersdrPanel({ api }) {
   // Hence: one receiver at a time, off unless asked for, and the panel says
   // both of those things where the operator will read them.
   const [live, setLive] = useState(null);            // host being monitored live
-  const liveRef = useRef({ decoder: null, nextAt: 0, host: null });
+  // Off by default. On, live audio continues through a transmission — which is
+  // the tune-up-carrier and CW case, and is safe only on headphones.
+  const [monitorWhileKeyed, setMonitorWhileKeyed] = useState(false);
+  const liveRef = useRef({ decoder: null, nextAt: 0, host: null, paused: false });
+  const monitorWhileKeyedRef = useRef(false);
+  useEffect(() => { monitorWhileKeyedRef.current = monitorWhileKeyed; }, [monitorWhileKeyed]);
 
   const stopLive = useCallback(() => {
     const l = liveRef.current;
     try { l.decoder?.free(); } catch { /* already freed */ }
-    l.decoder = null; l.host = null; l.nextAt = 0;
+    l.decoder = null; l.host = null; l.nextAt = 0; l.paused = false;
     setLive(null);
+  }, []);
+
+  // Pausing keeps the decoder and the chosen receiver; it only stops scheduling
+  // audio. Tearing the session down on every over and rebuilding it after would
+  // lose the receiver selection and re-admit on someone else's instance for no
+  // reason.
+  const pauseLive = useCallback((paused) => {
+    const l = liveRef.current;
+    if (!l.decoder) return;
+    l.paused = paused;
+    // Restart the schedule after a pause rather than trying to catch up on
+    // audio the operator did not hear.
+    if (!paused) l.nextAt = 0;
   }, []);
 
   const startLive = useCallback(async (host) => {
@@ -373,7 +391,7 @@ function UbersdrPanel({ api }) {
   // to back, so the stream paces itself rather than accumulating a lag.
   const playLiveFrame = useCallback((host, payload) => {
     const l = liveRef.current;
-    if (l.host !== host || !l.decoder) return;
+    if (l.host !== host || !l.decoder || l.paused) return;
     const ctx = audio.current.ctx;
     if (!ctx) return;
     try {
@@ -525,16 +543,19 @@ function UbersdrPanel({ api }) {
         keyedRef.current = keyed;
 
         if (keyed) {
-          // Playing recorded audio while the microphone is open is a delayed
-          // howl put on the air. Live monitoring is the operator's explicit
-          // choice and is left alone; recorded playback is not.
+          // Anything audible while the microphone is open is a delayed howl put
+          // on the air. Recorded playback always stops; live audio pauses unless
+          // the operator has explicitly asked to monitor through a transmission
+          // — the tune-up-carrier case, which is a headphone activity.
           stopPlayback();
+          if (!monitorWhileKeyedRef.current) pauseLive(true);
           // Under split these differ, and monitoring the VFO while transmitting
           // elsewhere would report that nobody hears the operator.
           retuneAll(radioRef.current?.transmitHz, radioRef.current?.mode);
           startRecording();
         } else {
           stopRecording();
+          pauseLive(false);
           // Back to what the operator is listening to.
           retuneAll(radioRef.current?.vfoHz, radioRef.current?.mode);
         }
@@ -542,7 +563,7 @@ function UbersdrPanel({ api }) {
     };
     const t = window.setInterval(tick, 100);
     return () => { alive = false; window.clearInterval(t); };
-  }, [api, startRecording, stopRecording, stopPlayback, retuneAll]);
+  }, [api, startRecording, stopRecording, stopPlayback, retuneAll, pauseLive]);
 
   // Never leave sockets open on someone else's receiver.
   useEffect(() => () => disconnectAll(), [disconnectAll]);
@@ -600,16 +621,30 @@ function UbersdrPanel({ api }) {
     live
       ? h('div', {
           style: {
-            border: '1px solid var(--danger, #e5715f)', borderRadius: 3,
+            border: '1px solid var(--border, #2a2e35)', borderRadius: 3,
             padding: '8px 11px', ...css.note, lineHeight: 1.5,
+            display: 'flex', flexDirection: 'column', gap: 6,
           },
         },
-          h('b', { style: { color: 'var(--danger, #e5715f)' } }, 'Live monitoring is on. '),
-          'Use headphones: remote audio from your speakers with an open microphone '
-          + 'is a feedback howl, delayed by seconds, transmitted. And expect to hear '
-          + 'yourself one to two seconds late — that badly disrupts speaking, so this '
-          + 'is for a tune-up carrier, CW or watching an amplifier rather than for '
-          + 'talking.')
+          h('div', null,
+            `Listening live to ${live.split('.')[0]}. `,
+            'Audio pauses while you transmit and resumes when you unkey.'),
+          h('label', { style: { display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' } },
+            h('input', {
+              type: 'checkbox',
+              checked: monitorWhileKeyed,
+              onChange: (e) => setMonitorWhileKeyed(e.target.checked),
+            }),
+            h('span', null, 'keep listening while I transmit')),
+          monitorWhileKeyed
+            ? h('div', { style: { color: 'var(--danger, #e5715f)' } },
+                h('b', null, 'Headphones. '),
+                'Remote audio from your speakers with the microphone open is a '
+                + 'feedback howl, delayed by seconds, transmitted. Expect to hear '
+                + 'yourself one to two seconds late as well, which badly disrupts '
+                + 'speaking — this setting is for a tune-up carrier, CW or watching '
+                + 'an amplifier, not for talking.')
+            : null)
       : null,
 
     takes.length

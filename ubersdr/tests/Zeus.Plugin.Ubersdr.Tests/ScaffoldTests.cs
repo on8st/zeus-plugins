@@ -109,6 +109,20 @@ public class ScaffoldTests
     }
 
     [Fact]
+    public void Live_audio_pauses_on_key_unless_explicitly_opted_out()
+    {
+        // The default has to be safe. Receive diversity means listening on
+        // speakers and then answering the station, and audio still running at
+        // that moment is a feedback howl put on the air. Monitoring through a
+        // transmission stays available, but only when asked for.
+        var module = Panel();
+
+        Assert.Contains("useState(false)", module);                 // opt-in defaults off
+        Assert.Contains("if (!monitorWhileKeyedRef.current) pauseLive(true)", module);
+        Assert.Contains("pauseLive(false)", module);                // and resumes on unkey
+    }
+
+    [Fact]
     public void Live_monitoring_warns_about_both_hazards()
     {
         // Feedback is the obvious one. Delayed auditory feedback is the one an
@@ -116,10 +130,7 @@ public class ScaffoldTests
         // late disrupts fluent speech badly, which is why this is for a carrier
         // or CW rather than for talking. Both belong in front of the operator,
         // not in a design document.
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
-        var module = File.ReadAllText(Path.Combine(
-            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+        var module = Panel();
 
         Assert.Contains("headphones", module, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("feedback howl", module, StringComparison.OrdinalIgnoreCase);
@@ -132,12 +143,17 @@ public class ScaffoldTests
         // A decoder per receiver is what phase 2 exists to avoid, and six
         // simultaneous live streams would be unintelligible anyway. The live
         // state is a single host, not a set.
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
-        var module = File.ReadAllText(Path.Combine(
-            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
+        var module = Panel();
 
         Assert.Contains("const [live, setLive] = useState(null)", module);
         Assert.Contains("stopLive();", module);   // starting one stops any other
+    }
+
+    private static string Panel()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && dir.Name != "ubersdr") dir = dir.Parent;
+        return File.ReadAllText(Path.Combine(
+            dir!.FullName, "src", "Zeus.Plugin.Ubersdr", "ui", "ubersdr.es.js"));
     }
 }
