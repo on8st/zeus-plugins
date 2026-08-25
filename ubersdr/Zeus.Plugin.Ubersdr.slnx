@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Zeus.Plugin.Ubersdr/Zeus.Plugin.Ubersdr.csproj" />
+  <Project Path="tests/Zeus.Plugin.Ubersdr.Tests/Zeus.Plugin.Ubersdr.Tests.csproj" />
+</Solution>
