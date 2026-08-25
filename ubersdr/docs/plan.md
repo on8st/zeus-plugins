@@ -16,25 +16,66 @@ established, not by what the contracts advertise.
 | Plugin contract gives | settings, logging, backend routes, panel | yes |
 | Plugin contract does **not** give | radio state, radio control, audio playback, QRZ, identity | probed NULL on both engines |
 
-## Phase 0 — settle four unknowns before writing product code
+## Phase 0 — done. All four settled.
 
-None of these is a discussion; each is an afternoon at most.
+**1. Can the panel reach the engine's API? Yes, cross-origin, explicitly allowed.**
 
-1. **Can the panel reach the engine's own API?** The panel is served from the
-   engine (`/api/plugins/<id>/ui/...`), so same-origin is likely — but unverified.
-   *If not:* a backend route proxying `/api/state` and `/api/radio/ptt-status` is
-   the two-line fallback. Settle it first; it decides where the polling lives.
-2. **Poll or stream?** `StreamingHub` exists. If radio state and PTT are on it,
-   MOX transitions arrive promptly; if not, polling `ptt-status` at a few Hz is
-   the floor. Latency here bounds how tightly recording can bracket a transmission.
-3. **Does the tune protocol behave as read?** Connect to one instance — Stan's
-   own, so nobody else's slot is consumed — send `tune`, confirm audio frames and
-   a usable SNR arrive. **This is the one that can invalidate the plan**, so it
-   comes before anything is built on top.
-4. **Opus in the panel.** Vendor a decoder; a CSP-constrained webview cannot pull
-   one from a CDN. Check the licence is GPL-compatible.
+The UI page is served by the **product** on `:53984`; the engine 404s `/`. The
+plugin's UI module is served by the **engine** and 404s on the product. So the
+panel runs on one origin and its module comes from another — and the engine
+returns:
 
-**Gate:** if (3) fails, stop and redesign. Everything downstream assumes it.
+```
+Access-Control-Allow-Origin: http://127.0.0.1:53984
+Access-Control-Allow-Credentials: true
+```
+
+It permits the product origin by name. A panel fetch of `/api/state` therefore
+works, provided it uses an absolute URL to the engine — a bare `/api/state`
+resolves against the *page* origin and 404s on the product.
+
+**A backend route is still the recommendation.** It sidesteps origin and port
+discovery entirely, and the plugin runs inside the engine process, so it can read
+`--port` from `Environment.GetCommandLineArgs()`. Direct fetch is the
+optimisation; the proxy is the thing that keeps working when the layout changes.
+
+**2. Poll or stream? Poll — there is no state stream.**
+
+The engine's `/ws` accepts a connection and streams **binary telemetry only**:
+217 frames in 8 seconds, not one JSON message, nothing resembling radio state or
+keying. It is the audio/spectrum transport, not a control plane.
+
+Polling `GET /api/radio/ptt-status` measured at 10 Hz over loopback:
+
+| median | p95 | max | worst-case detection lag |
+|---|---|---|---|
+| 3.2 ms | 4.6 ms | 16.2 ms | **≈ 116 ms** |
+
+Against a 7 ms tune latency and transmissions measured in seconds, 100 ms
+resolution is comfortably enough. Poll at 10 Hz while idle-but-armed, and there
+is no reason to go faster.
+
+**3. Does the tune protocol behave as read? Yes — with four corrections.**
+
+Full findings in [`design/source/protocol.md`](design/source/protocol.md).
+Connection is a three-step affair (client-generated UUID → `POST /connection`
+admission → socket with parameters in the query string), version 2 is the only
+one that streams audio, the invalid sentinel is `-Infinity` rather than `-999.0`,
+and a 30-second over costs about 196 kB per receiver. **The gate passed.**
+
+**4. Opus decoder.** `opus-decoder` (`eshaz/wasm-audio-decoders`) is **MIT**,
+compatible with GPL-2.0-or-later, and vendorable. Current version 0.7.11.
+
+### What phase 0 changed
+
+- Pre-tuning receivers on VFO change is **not** required: 7 ms tune latency means
+  key-down is soon enough.
+- The monitor must **exclude antenna-less instances from metering** — this
+  station's own instance reports `antenna_connected: false` and sends
+  `-Infinity` power on every frame, which must read as *no meter available*
+  rather than *hears nothing*.
+- Admission control (`POST /connection`) is where an instance enforces its client
+  limit, so honouring a refusal is not optional politeness — it is the protocol.
 
 ## Phase 1 — receiver picker and live SNR, no audio
 
