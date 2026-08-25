@@ -8,7 +8,7 @@
 // default export is `register(api)`, which calls `api.registerPanel({ id,
 // component })`. `api.callBackend(method, path, body)` returns a fetch Response
 // and is prefixed with this plugin's route, so "/config" reaches
-// /api/plugins/on8st.wavelog/config.
+// /api/plugins/be.on8st.zeus.plugins.wavelog/config.
 //
 // Written with React.createElement rather than JSX so the plugin needs no build
 // step: no npm, no bundler, no lockfile. React comes from the host as a bare

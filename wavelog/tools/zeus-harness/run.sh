@@ -69,19 +69,19 @@ ok "plugin and engine built"
 
 # ---- install ----------------------------------------------------------------
 section "install"
-mkdir -p "$SANDBOX/data" "$SANDBOX/features/on8st.wavelog"
+mkdir -p "$SANDBOX/data" "$SANDBOX/features/be.on8st.zeus.plugins.wavelog"
 
-cp -R "$PLUGIN_DIR/src/Zeus.Plugin.Wavelog/bin/Release/net10.0/" "$SANDBOX/features/on8st.wavelog/"
+cp -R "$PLUGIN_DIR/src/Zeus.Plugin.Wavelog/bin/Release/net10.0/" "$SANDBOX/features/be.on8st.zeus.plugins.wavelog/"
 # The host resolves the contracts from its own load context; shipping a copy
 # gives the interface types two identities and the plugin fails to bind.
-rm -f "$SANDBOX/features/on8st.wavelog/Zeus.Plugins.Contracts.dll"
+rm -f "$SANDBOX/features/be.on8st.zeus.plugins.wavelog/Zeus.Plugins.Contracts.dll"
 ok "plugin installed into the sandbox"
 
 # The panel is plain ES with no build step, so nothing else would catch a syntax
 # error before Zeus Link silently failed to render it.
 if command -v node >/dev/null 2>&1; then
   sed "s|^import React.*|const React={createElement(){}};const useCallback=f=>f,useEffect=()=>{},useState=()=>[];|" \
-    "$SANDBOX/features/on8st.wavelog/ui/wavelog.es.js" > "$SANDBOX/panel-check.mjs"
+    "$SANDBOX/features/be.on8st.zeus.plugins.wavelog/ui/wavelog.es.js" > "$SANDBOX/panel-check.mjs"
   if node --check "$SANDBOX/panel-check.mjs" 2>/dev/null; then ok "panel module parses"
   else bad "panel module has a syntax error"; fi
 else
@@ -120,7 +120,7 @@ ZEUS_PLUGINS_PATH="$SANDBOX/features" \
   --port "$PORT" --bind loopback > "$SANDBOX/engine.log" 2>&1 &
 ENGINE_PID=$!
 
-W="http://127.0.0.1:$PORT/api/plugins/on8st.wavelog"
+W="http://127.0.0.1:$PORT/api/plugins/be.on8st.zeus.plugins.wavelog"
 for _ in $(seq 1 120); do curl -sf --max-time 2 -o /dev/null "$W/status" && break; sleep 0.5; done
 curl -sf --max-time 5 -o /dev/null "$W/status" || { bad "engine did not come up"; tail -30 "$SANDBOX/engine.log"; exit 1; }
 ok "engine up on :$PORT with the plugin"

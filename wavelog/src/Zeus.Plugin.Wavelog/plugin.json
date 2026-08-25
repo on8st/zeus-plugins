@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "on8st.wavelog",
+  "id": "be.on8st.zeus.plugins.wavelog",
   "name": "Wavelog Synchroniser",
   "version": "0.1.0",
   "author": "on8st",

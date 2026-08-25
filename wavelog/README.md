@@ -91,7 +91,7 @@ Through the **Wavelog Sync** panel in the workspace tools. The same surface is
 also plain HTTP on the engine's own port, which is what the panel calls:
 
 ```sh
-BASE=http://127.0.0.1:$PORT/api/plugins/on8st.wavelog   # the launcher picks the port
+BASE=http://127.0.0.1:$PORT/api/plugins/be.on8st.zeus.plugins.wavelog   # the launcher picks the port
 
 curl $BASE/config                                     # key is never returned
 curl -X POST $BASE/config -H 'content-type: application/json' -d '{
@@ -195,7 +195,7 @@ test.
 export PATH="$HOME/.dotnet:$PATH"
 dotnet build
 cp -r src/Zeus.Plugin.Wavelog/bin/Debug/net10.0/ \
-      ~/Library/Application\ Support/Zeus/features/on8st.wavelog/
+      ~/Library/Application\ Support/Zeus/features/be.on8st.zeus.plugins.wavelog/
 ```
 
 The output must contain `Zeus.Plugin.Wavelog.dll`, `LiteDB.dll`,

@@ -130,7 +130,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
   <h1>Wavelog Synchroniser</h1>
   <p class="standfirst">A station-engine plugin that keeps Zeus’s <em>own</em> logbook and a Wavelog instance in step, both directions. It began as a logbook replacement; the more interesting design is the one that gives the logbook back.</p>
   <p class="docmeta">
-    <span><b>Plugin id</b> on8st.wavelog</span>
+    <span><b>Plugin id</b> be.on8st.zeus.plugins.wavelog</span>
     <span><b>Target</b> wavelog.on8st.be</span>
     <span><b>SSOT</b> source/design.md</span>
   </p>
@@ -338,7 +338,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 <section>
   <div class="sechead"><span class="secnum">§4</span><h2>Manifest and endpoints</h2></div>
 <pre>{
-  <b>"id"</b>: "on8st.wavelog",
+  <b>"id"</b>: "be.on8st.zeus.plugins.wavelog",
   <b>"name"</b>: "Wavelog Synchroniser",
   <b>"sdk"</b>:        { "abi": 1, "minVersion": "1.4.0" },
   <b>"entrypoint"</b>: { "assembly": "Zeus.Plugin.Wavelog.dll",
@@ -369,7 +369,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
     </table>
   </div>
   <div class="prose">
-    <p>All prefixed <code>/api/plugins/on8st.wavelog/</code> — <code>IBackendPlugin</code> hands you a route builder already scoped to the plugin. This is the whole product; the panel (§11) is a form over exactly these, which is why it could be written without touching the C#.</p>
+    <p>All prefixed <code>/api/plugins/be.on8st.zeus.plugins.wavelog/</code> — <code>IBackendPlugin</code> hands you a route builder already scoped to the plugin. This is the whole product; the panel (§11) is a form over exactly these, which is why it could be written without touching the C#.</p>
     <p><code>POST</code> as well as <code>PUT</code> on <code>config</code> is not tidiness: the sample panels only ever call <code>GET</code> and <code>POST</code> through <code>api.callBackend</code>, so <code>PUT</code> alone would leave the panel unable to save.</p>
     <p><strong>Configuration is re-read, not cached authoritatively.</strong> Zeus owns the settings store and can rewrite a plugin's whole collection without telling it — that is how profile snapshot and restore work. <code>PluginSettingsChanged</code> exists but sits on the host's own store and is not on <code>IPluginContext</code>, so a plugin cannot subscribe. With no push available, a cached copy would leave the plugin talking to the old instance with the old key until restart. A 30-second TTL closes it.</p>
   </div>

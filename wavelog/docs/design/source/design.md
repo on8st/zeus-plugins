@@ -5,7 +5,7 @@ Keep Zeus's own logbook and a Wavelog instance in step, both directions.
 - Framework reference: [`docs/plugin-framework-how-to.md`](../../../../docs/plugin-framework-how-to.md)
 - Target: `wavelog.on8st.be` — Wavelog (Cloudlog fork) in Docker on the
   multihost, loopback `127.0.0.1:8086` behind Caddy
-- Plugin id: `on8st.wavelog`
+- Plugin id: `be.on8st.zeus.plugins.wavelog`
 
 ---
 
@@ -154,7 +154,7 @@ asserts it.
 ```jsonc
 {
   "schemaVersion": 1,
-  "id": "on8st.wavelog",
+  "id": "be.on8st.zeus.plugins.wavelog",
   "name": "Wavelog Synchroniser",
   "version": "0.1.0",
   "license": "GPL-2.0-or-later",
@@ -183,13 +183,13 @@ plugin-scoped and host-persisted, and the config `GET` endpoint never returns it
 
 | Route | Purpose |
 |---|---|
-| `GET /api/plugins/on8st.wavelog/config` | URL, profiles pulled, profile pushed to, **key redacted** |
-| `GET /api/plugins/on8st.wavelog/profiles` | `station_info` passthrough — what this key can reach |
-| `POST /api/plugins/on8st.wavelog/config` | set them (`PUT` also accepted) |
-| `POST /api/plugins/on8st.wavelog/test` | one round-trip against the instance |
-| `GET /api/plugins/on8st.wavelog/status` | logbook size, pending / failed counts, cursor, last error |
-| `POST /api/plugins/on8st.wavelog/retry` | re-queue the dead-letter items |
-| `POST /api/plugins/on8st.wavelog/resync` | full reconcile; `{"dryRun": true}` reports without writing |
+| `GET /api/plugins/be.on8st.zeus.plugins.wavelog/config` | URL, profiles pulled, profile pushed to, **key redacted** |
+| `GET /api/plugins/be.on8st.zeus.plugins.wavelog/profiles` | `station_info` passthrough — what this key can reach |
+| `POST /api/plugins/be.on8st.zeus.plugins.wavelog/config` | set them (`PUT` also accepted) |
+| `POST /api/plugins/be.on8st.zeus.plugins.wavelog/test` | one round-trip against the instance |
+| `GET /api/plugins/be.on8st.zeus.plugins.wavelog/status` | logbook size, pending / failed counts, cursor, last error |
+| `POST /api/plugins/be.on8st.zeus.plugins.wavelog/retry` | re-queue the dead-letter items |
+| `POST /api/plugins/be.on8st.zeus.plugins.wavelog/resync` | full reconcile; `{"dryRun": true}` reports without writing |
 
 `POST` as well as `PUT` on `config` is not tidiness: the sample panels only ever
 call `GET` and `POST` through `api.callBackend`, so `PUT` alone would leave the

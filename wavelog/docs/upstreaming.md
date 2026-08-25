@@ -66,9 +66,9 @@ been wrong every time in this project.
 
 ### The id is unconventional
 
-Ours is `on8st.wavelog`. Theirs are reverse-DNS: `org.openhpsdr.*`,
+Ours is `be.on8st.zeus.plugins.wavelog`. Theirs are reverse-DNS: `org.openhpsdr.*`,
 `com.openhpsdr.zeus.plugins.*`, `com.zeussdr.plugins.*`, `com.kb2uka.voyeur`.
-`be.on8st.wavelog` would match, on8st.be being the domain.
+`be.be.on8st.zeus.plugins.wavelog` would match, on8st.be being the domain.
 
 Worth settling before listing, because the id is load-bearing: it names the
 install directory and the settings collection (`plugin_on8st_wavelog`). The
@@ -81,7 +81,7 @@ Their schema, filled in. `sha256` comes from `tools/package.sh`.
 
 ```jsonc
 {
-  "id": "on8st.wavelog",
+  "id": "be.on8st.zeus.plugins.wavelog",
   "name": "Wavelog Synchroniser",
   "description": "Keeps the Zeus logbook in step with a Wavelog instance, both directions. Pushes every contact you log, imports contacts logged by other apps, sweeps LoTW and QSL confirmations back, and can publish live rig state. Not a logbook: Zeus keeps owning your QSOs and uninstalling this leaves them untouched.",
   "author": "on8st",
@@ -95,7 +95,7 @@ Their schema, filled in. `sha256` comes from `tools/package.sh`.
       "sdkAbi": 1,
       "sdkMinVersion": "1.4.0",
       "platforms": ["osx"],
-      "downloadUrl": "https://github.com/on8st/zeus-plugins/releases/download/wavelog-v0.1.0/on8st.wavelog-0.1.0.zip",
+      "downloadUrl": "https://github.com/on8st/zeus-plugins/releases/download/wavelog-v0.1.0/be.on8st.zeus.plugins.wavelog-0.1.0.zip",
       "sha256": "<from tools/package.sh>"
     }
   ]
