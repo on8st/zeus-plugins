@@ -1,174 +1,117 @@
 # Remote monitor — design
 
-**Hear your own signal as a distant station hears it.** A list of public UberSDR
-receivers, each auto-tuned to the frequency and mode Zeus is on, streaming back
-while you transmit — audio you can listen to, and an SNR figure per receiver
-saying how strongly you are actually getting out.
+**A wall of stations all listening to your transmission.** Every one shows a live
+signal level while you are keyed; when you unkey, each has a recording of your
+over that you can play back.
 
-Fuses use cases 1 and 2. It is the first thing worth building here because it
-changes what the operator can *do*, not what they can look at, and because
-everything it needs turned out to exist.
+Specified by the operator, and the specification is better than the design it
+replaced: it drops live audio during transmit, which removes the feedback problem
+outright, and it turns out to map onto the protocol almost exactly.
 
-## What the plugin framework actually provides: nothing useful here
+## Why this scales to many receivers
 
-Both "corrections" I made to this document were themselves wrong, and only a
-runtime probe found it. The contracts declare `IRadioStateReader`,
-`IRadioController` and `IAudioPlaybackSink` — but every one is a
-`GetService<T>()` lookup in `PluginManager`, and **nothing implements or
-registers any of them**, not in the published source and not in the shipped
-build.
-
-A probe plugin declaring `ReadRadioState` and `ControlRadio`, run in both:
+UberSDR's audio frames are binary, with a fixed header before the Opus payload:
 
 ```
-                     source engine v2.0.9    shipped Zeus Link 2.0.12
-Radio                NULL                    NULL
-RadioController      NULL                    NULL
-Playback             NULL                    NULL
-Qrz                  NULL                    NULL
-OperatorIdentity     NULL                    NULL
+byte  0–7    timestamp       uint64 LE
+byte  8–11   sampleRate      uint32 LE
+byte  12     channels        uint8
+byte  13–16  basebandPower   float32 LE      ← signal
+byte  17–20  noisePower      float32 LE      ← noise floor
+byte  21+    Opus payload
 ```
 
-So through `IPluginContext` a plugin **cannot** read the frequency, know when
-the operator keys, retune anything, or play a single sample into Zeus. What is
-left is settings, logging, HTTP routes and a UI panel.
+`signalSNR = basebandPower - noisePower`, in dB. `-999.0` in either field means
+*invalid* and must be shown as no reading rather than as a very poor one.
 
-This also means the Wavelog synchroniser's rig-state publishing can never have
-worked: it is guarded by `if (context.Radio is { } radio)`, and that is always
-false. Dead code, not a bug — but it should stop being advertised.
+The published client says so itself: *"Signal metrics are included so followers
+can update signal bars and SNR charts **from the frame header alone**."*
 
-## The route that does work: the engine's own HTTP API
+That is the whole reason a long list is practical:
 
-The plugin API is not the only surface. The engine serves `GET /api/state` on
-its own port, and it carries more than the plugin contract ever offered:
+| While keyed | Read 21 bytes per frame, append the Opus payload to a buffer. **No decoding.** |
+| After unkey | Decode one receiver's buffer — the one the operator picked. **One decoder, on demand.** |
 
-```
-vfoHz            7200000        mode   LSB
-splitEnabled     false          splitTxHz  0        txVfo  A
-txMonitorEnabled false          rx2AudioMode Both   txReceiverIndex 0
-```
+Twenty receivers metering live costs twenty header reads per frame interval and
+some memcpy. Opus at typical rates is a few kB/s, so a 30-second over is well
+under 100 kB per receiver — the whole wall fits in memory without thought.
 
-`splitEnabled` and `splitTxHz` answer the split question outright — the transmit
-frequency is exposed separately and does not have to be inferred.
-
-`GET /api/radio/ptt-status` carries the keying state:
-
-```
-{ "moxOn": false, "tunOn": false, "twoToneOn": false, "cwKeyDown": null,
-  "ownedMox": false, "hangTimeMs": 250, "moxOwner": null }
-```
-
-So the monitor gets its radio state from the engine over HTTP rather than from
-`IPluginContext`. A backend plugin can call it on loopback; the panel can too,
-being served from the same origin.
-
-## Audio: the panel, and only the panel
-
-With `IAudioPlaybackSink` null, remote audio cannot enter Zeus at all. The one
-remaining path is the panel: `wss://<host>/ws` straight from the webview, Opus
-into an `AudioContext`. WebSocket is not subject to CORS, and several sockets can
-be open at once.
-
-That forces the feedback question rather than merely raising it. Audio played by
-the panel goes to the browser's output device with **no relationship to Zeus's
-audio routing and no knowledge of MOX**. Headphones stop being a recommendation
-and become a requirement, and *record-while-keyed, replay-on-unkey* stops being
-the safer default and becomes the only responsible one — the panel can poll
-`ptt-status`, or watch it over the state stream, to know the window.
-
-## The UberSDR side
-
-Read from the published client, not assumed:
-
-```
-wss://<host>/ws                       audio + status
-wss://<host>/ws/user-spectrum         spectrum
-
-→ { "type": "tune", "frequency": <Hz>, "mode": "<mode>",
-    "bandwidthLow": <Hz>, "bandwidthHigh": <Hz> }
-→ { "type": "set_mute", "muted": <bool> }
-→ { "type": "ping" }
-← { "type": "audio", ... }            Opus
-← { "type": "status", ... }
-```
-
-Signal quality is a **true SNR in dB**, computed as `basebandPower - noisePower`.
-That is the number the operator wants: not an S-meter reading of unknown
-calibration, but a comparable figure across receivers.
-
-Receiver selection comes from `https://instances.ubersdr.org/api/instances` —
-callsign, location, `maidenhead`, `distance`, `bearing_degrees`,
-`available_clients`, `is_online`.
+Had the design needed live audio from every receiver, it would have needed N
+concurrent Opus decoders and would not have scaled past a handful. The
+operator's version is cheaper *and* safer.
 
 ## Shape
 
 ```
-Zeus radio state ──► plugin backend ──► N × wss://…/ws  (one per receiver)
-  FrequencyHz                              tune to Zeus's frequency + mode
-  Mode                                     ▼
-  MoxChanged ─────────────────────────► record / play
-                                             ▼
-                        IAudioPlaybackSink.PlayLocal → operator hears it
-                        SNR per receiver     → panel shows how well you're heard
+engine /api/radio/ptt-status ──► key down
+engine /api/state            ──► splitTxHz when splitEnabled, else vfoHz
+                                        │
+        ┌───────────────────────────────┴───────────────────────────┐
+        ▼                    ▼                    ▼                 ▼
+   wss://rx1/ws         wss://rx2/ws         wss://rx3/ws  …   wss://rxN/ws
+   tune → TX freq       tune → TX freq       tune → TX freq
+        │                    │                    │
+   header → S bar       header → S bar       header → S bar     ← live, while keyed
+   opus  → buffer       opus  → buffer       opus  → buffer
+        └───────────────────────────────┬───────────────────────────┘
+                                key up  ▼
+                        play back any one of them
 ```
 
-The panel picks receivers and displays SNR; the backend owns the sockets, the
-Opus decoding and the playback. Server-side also sidesteps CORS entirely, which
-the panel would hit on any per-instance REST call.
+## What the numbers mean, and do not
 
-## The thing that will bite: feedback
+The figure available is **SNR in dB**, not an absolute signal level. That matters
+for how it is labelled:
 
-Playing a remote receiver through the shack speakers **while the microphone is
-open** is a feedback loop with one to three seconds of internet latency in it —
-a delayed howl, transmitted. This is not a theoretical risk; it is the default
-outcome of the obvious implementation.
+- **Comparing one receiver against itself over time is sound.** Antenna A versus
+  antenna B, before and after a tuning change, more power versus less — same
+  receiver, same noise floor, so the difference is yours.
+- **Comparing receivers against each other is not.** A quiet rural receiver shows
+  a better SNR than a suburban one for the identical signal. Ranking the wall
+  by SNR would say more about their noise floors than about your antenna.
 
-Two defences, and the default should be the second:
+So the wall should show each receiver's **own** reading and its change across
+transmissions, and must not present a leaderboard implying "this station hears me
+best". Calling it "S level" invites exactly that reading; the panel should say
+SNR, in dB, and say what it is relative to.
 
-1. **Headphones**, stated plainly in the panel. Necessary but not sufficient —
-   an operator will forget.
-2. **Record while keyed, play back on unkey.** No open mic when audio is
-   playing, so no loop is possible. It is also *better*: nobody can critically
-   judge their own audio while talking. `MoxChanged` gives the exact window, and
-   `LocalMonitorBacklog` lets the plugin wait out the tail before reporting done.
+Absolute S-units are not available: they would need each receiver's gain
+calibration, which the directory does not carry.
 
-Live monitoring stays available for headphone users, behind an explicit toggle
-that says why.
+## Feedback: no longer a problem
+
+The earlier design wanted live remote audio during transmit, which with an open
+microphone is a delayed howl put on the air. This specification does not: nothing
+is audible while keyed, and playback happens after unkey with the microphone
+closed. The hazard is designed out rather than warned about.
+
+The one remaining care: **playback must stop if the operator keys again.** Watch
+`ptt-status` during playback and pause on key-down.
+
+## Radio state
+
+From the engine's own HTTP API, since the plugin contract provides none of it:
+
+- `GET /api/state` — `vfoHz`, `mode`, `splitEnabled`, `splitTxHz`
+- `GET /api/radio/ptt-status` — `moxOn`, `tunOn`, `hangTimeMs`
+
+**Tune to the transmit frequency, not the VFO**: `splitTxHz` when `splitEnabled`
+is true, `vfoHz` otherwise. Getting this wrong under split monitors an empty
+frequency and reports that nobody hears you — a silent, plausible, wrong answer.
 
 ## Open questions
 
-Both original questions are now answered, and not as hoped:
-
-1. ~~Is `PlayLocal` audible while MOX is on?~~ **Moot — `Playback` is null.**
-   Even had it existed, the drain is gated behind `ShouldPublishNormalRxAudio`,
-   which is false while transmit suppresses RX audio, so it would not have been
-   audible while keyed anyway.
-2. ~~What does `FrequencyHz` report under split?~~ **Moot — `Radio` is null.**
-   `GET /api/state` exposes `splitEnabled` and `splitTxHz` separately, which is
-   a better answer than the contract could have given.
-
-What remains open:
-
-3. **Is `/api/state` stable?** It is the engine's own API, not a plugin contract,
-   so nothing promises it. Depending on it means tracking engine releases —
-   acceptable, but it should be an explicit decision, and `schemaVersion` in the
-   ptt response suggests upstream thinks about compatibility here.
-4. **How does the panel reach the engine?** Same origin is likely but unverified.
-   If not, a backend route proxying `/api/state` is a two-line fallback.
-5. **Live updates or polling?** `StreamingHub` exists; whether state and PTT are
-   on it is unchecked. Polling `ptt-status` at a few Hz would work but is crude.
-6. **Opus in the browser.** UberSDR's own client uses `OpusDecoder`; the panel
-   would need the same, and it must be vendored rather than fetched from a CDN.
-7. **Courtesy.** Unchanged: connect around transmit, honour `available_clients`,
-   and ask upstream before polling the directory from every install.
-
-## Why this one first
-
-Everything it needs exists — just not where this document first assumed. Radio
-state and keying come from the engine's HTTP API, audio and SNR from UberSDR's
-WebSocket in the panel, receiver choice from the public directory. The plugin
-contract contributes settings, a route and a panel, and nothing else.
-
-It is still the right first build: it is the only one of the ten use cases whose
-every dependency has now been verified at runtime rather than read hopefully off
-an interface.
+1. **Protocol version.** The header layout above is version 2/3; the client
+   negotiates and normalises `noisePower` accordingly. Establish what a plain
+   connection negotiates and refuse to meter a version we do not understand
+   rather than misreading a float.
+2. **Tune latency.** How long between `tune` and the first frame on the new
+   frequency? If it is seconds, receivers must be tuned *before* key-down —
+   which means watching the VFO, not just the key.
+3. **Slot cost.** N receivers is N client slots on other people's hardware.
+   Connect on key-down and release after playback, cap the default list, and
+   honour `available_clients`.
+4. **Panel or backend?** Backend keeps CORS and vendoring out of it, but must
+   then stream audio to the panel for playback. Panel is simpler and WebSocket
+   ignores CORS. Decide once phase 0 answers whether the panel can reach the
+   engine API.
