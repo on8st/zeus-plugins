@@ -10,6 +10,11 @@ attaches to the same database file and moves contacts across.
 
 Design: [`docs/design/`](docs/design/) · Prompts: [`prompts/`](prompts/)
 
+**Tested on macOS; expected to work on Linux and Windows.** Pure .NET, no
+native code, and the logbook path is derived rather than hard-coded — but that
+derivation has only been verified on macOS. `/status` names the file it attached
+to, and `logbookPath` overrides the search if it guesses wrong.
+
 **Status: running in production.** Installed in Zeus Link, attached to the
 built-in logbook, syncing both directions with a live Wavelog: a contact logged
 in Zeus reached the server, nine logged elsewhere reached Zeus, the panel

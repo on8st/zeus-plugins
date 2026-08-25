@@ -42,7 +42,7 @@ registry buys discoverability and automatic updates, nothing more.
 | No secrets, no machine paths, anonymised commit identity | done — history scanned |
 | ABI honest — `abi 1`, `sdk 1.4.0` | done |
 | **Source public** | **decision needed** |
-| **Tested on Windows and Linux** | **not done — macOS only** |
+| Platform claim honest | done — `any`, with the caveat stated |
 | **Plugin id follows their convention** | **decision needed** |
 
 ### Source has to be public
@@ -54,15 +54,22 @@ identity, not a technical step — the history is already clean and anonymised.
 
 ### It has only ever run on macOS
 
-The logbook path is derived as a sibling of the engine's data directory rather
-than hard-coded, so the *shape* is portable — but that ZeusProduct keeps its
-logbook in the same relative place on Windows and Linux is **an assumption we
-have never checked**. If it is wrong there, the plugin reports "no Zeus logbook
-found" on those platforms, which is exactly the bug we already shipped once.
+`platforms` is a registry-catalogue field; nothing in the plugin host reads it,
+and `plugin.json` has no equivalent. So it describes rather than gates, and
+`any` is the honest entry for a pure-.NET plugin with no native code — every
+other registry entry says the same.
 
-Either verify on both, or declare `"platforms": ["osx"]` and say so plainly.
-Declaring `any` on the strength of one platform would be the same guess that has
-been wrong every time in this project.
+What must not be dressed up is the testing. The logbook path is *derived* as a
+sibling of the engine's data directory rather than hard-coded, so the shape
+carries to Windows and Linux — but that Zeus keeps its logbook in the same
+relative place there has never been checked. If it does not, the plugin reports
+"no Zeus logbook found" on those platforms, which is the bug already shipped
+once on macOS.
+
+The mitigation is already in place: `/status` names the file it attached to and
+every candidate it found, and `logbookPath` overrides the search outright. So a
+wrong guess is visible and fixable rather than silent. Say **tested on macOS,
+expected to work on Linux and Windows** — and mean both halves.
 
 ### The id is unconventional
 
@@ -94,7 +101,7 @@ Their schema, filled in. `sha256` comes from `tools/package.sh`.
       "version": "0.1.0",
       "sdkAbi": 1,
       "sdkMinVersion": "1.4.0",
-      "platforms": ["osx"],
+      "platforms": ["any"],
       "downloadUrl": "https://github.com/on8st/zeus-plugins/releases/download/wavelog-v0.1.0/be.on8st.zeus.plugins.wavelog-0.1.0.zip",
       "sha256": "<from tools/package.sh>"
     }
