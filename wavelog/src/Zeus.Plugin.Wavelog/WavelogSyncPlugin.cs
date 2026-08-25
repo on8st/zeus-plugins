@@ -32,6 +32,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
 
     private ZeusLogbookDb? _logbook;
     private string _dataDirectory = "";
+    private string? _logbookPath;
     private IWavelogTransport? _transport;
     private bool _saidNoLogbook;
     private LiteDbOutbox? _outbox;
@@ -120,17 +121,50 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         {
         if (_logbook is not null) return true;
 
-        if (!ZeusLogbookDb.ExistsIn(_dataDirectory))
+        // An explicit path always wins: it is the escape hatch for a layout we
+        // have not met, and the answer when two logbooks exist.
+        var configured = _config.LogbookPath;
+        string path;
+
+        if (!string.IsNullOrWhiteSpace(configured))
         {
-            if (!_saidNoLogbook)
+            if (!File.Exists(configured))
             {
-                _log?.LogError("wavelog: {Message}", ZeusLogbookDb.NoLogbookMessage);
-                _saidNoLogbook = true;      // once, not every thirty seconds
+                if (!_saidNoLogbook)
+                {
+                    _log?.LogError("wavelog: the configured logbook path does not exist: {Path}", configured);
+                    _saidNoLogbook = true;
+                }
+                return false;
             }
-            return false;
+            path = configured;
+        }
+        else
+        {
+            var found = ZeusLogbookDb.FindExisting(_dataDirectory);
+            if (found.Count == 0)
+            {
+                if (!_saidNoLogbook)
+                {
+                    _log?.LogError("wavelog: {Message}", ZeusLogbookDb.NoLogbookMessage);
+                    _saidNoLogbook = true;      // once, not every thirty seconds
+                }
+                return false;
+            }
+            if (found.Count > 1)
+            {
+                if (!_saidNoLogbook)
+                {
+                    _log?.LogError("wavelog: {Message}", ZeusLogbookDb.AmbiguousLogbookMessage(found));
+                    _saidNoLogbook = true;
+                }
+                return false;
+            }
+            path = found[0];
         }
 
-        _logbook = ZeusLogbookDb.ForDataDirectory(_dataDirectory);
+        _logbookPath = path;
+        _logbook = new ZeusLogbookDb(path);
         _sync = new WavelogSyncService(_logbook, _outbox!, _transport!, CurrentConfig, _cursors!, _log);
         _pump!.Delivered += id => _logbook?.MarkPushed(id);
         _pump.DeadLettered += (id, reason) => _logbook?.MarkPushFailed(id, reason);
@@ -140,8 +174,8 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
 
         _saidNoLogbook = false;
         _log?.LogInformation(
-            "wavelog: attached to the native logbook ({Count} QSOs), configured={Configured}",
-            _logbook.Count(), _config.IsUsable);
+            "wavelog: attached to {Path} ({Count} QSOs), configured={Configured}",
+            path, _logbook.Count(), _config.IsUsable);
         return true;
         }
     }
@@ -228,6 +262,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
     private sealed class StoredConfig
     {
         public string BaseUrl { get; set; } = "";
+        public string LogbookPath { get; set; } = "";
         public string ApiKey { get; set; } = "";
         public int StationProfileId { get; set; } = 1;
         public List<int> PullStationIds { get; set; } = [];
@@ -238,6 +273,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         public WavelogConfig ToConfig() => new()
         {
             BaseUrl = BaseUrl, ApiKey = ApiKey, StationProfileId = StationProfileId,
+            LogbookPath = LogbookPath,
             PullStationIds = PullStationIds, PushEnabled = PushEnabled,
             PullEnabled = PullEnabled, RadioEnabled = RadioEnabled,
         };
@@ -245,6 +281,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
         public static StoredConfig From(WavelogConfig c) => new()
         {
             BaseUrl = c.BaseUrl, ApiKey = c.ApiKey, StationProfileId = c.StationProfileId,
+            LogbookPath = c.LogbookPath,
             PullStationIds = c.PullStationIds.ToList(), PushEnabled = c.PushEnabled,
             PullEnabled = c.PullEnabled, RadioEnabled = c.RadioEnabled,
         };
@@ -265,6 +302,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
                 pushEnabled = c.PushEnabled,
                 pullEnabled = c.PullEnabled,
                 radioEnabled = c.RadioEnabled,
+                logbookPath = c.LogbookPath,
                 apiKeySet = !string.IsNullOrWhiteSpace(c.ApiKey),   // never the key itself
             });
         });
@@ -286,6 +324,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
             _config = _config with
             {
                 BaseUrl = url,
+                LogbookPath = body["logbookPath"]?.GetValue<string>()?.Trim() ?? _config.LogbookPath,
                 ApiKey = string.IsNullOrWhiteSpace(key) ? _config.ApiKey : key!.Trim(),
                 StationProfileId = body["stationProfileId"]?.GetValue<int>() ?? _config.StationProfileId,
                 PullStationIds = body["pullStationIds"]?.AsArray()?.Select(n => n!.GetValue<int>()).ToList()
@@ -297,6 +336,15 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
 
             await _ctx!.Settings.SetAsync(ConfigKey, StoredConfig.From(_config), ct).ConfigureAwait(false);
             _configReadUtc = DateTime.UtcNow;
+
+            // Pointing at a different logbook must take effect now, not at the
+            // next restart — that is the whole point of the override.
+            if (!string.Equals(_logbookPath, _config.LogbookPath, StringComparison.Ordinal)
+                && !string.IsNullOrWhiteSpace(_config.LogbookPath))
+            {
+                lock (_attachGate) { _logbook?.Dispose(); _logbook = null; _sync = null; _saidNoLogbook = false; }
+                TryAttachLogbook();
+            }
             return Results.Ok(new { ok = true });
         });
 
@@ -321,7 +369,16 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
             {
                 configured = c.IsUsable,
                 logbookInstalled = _logbook is not null,
-                logbookProblem = _logbook is null ? ZeusLogbookDb.NoLogbookMessage : _logbook.Verify(),
+                // Which file, not just whether. Two logbooks with the same name
+                // in different directories is exactly the situation where "it
+                // says 0 QSOs but I can see them" happens.
+                logbookPath = _logbookPath,
+                logbookCandidates = ZeusLogbookDb.FindExisting(_dataDirectory),
+                logbookProblem = _logbook is null
+                    ? (ZeusLogbookDb.FindExisting(_dataDirectory) is { Count: > 1 } many
+                        ? ZeusLogbookDb.AmbiguousLogbookMessage(many)
+                        : ZeusLogbookDb.NoLogbookMessage)
+                    : _logbook.Verify(),
                 qsosInLogbook = _logbook?.Count() ?? 0,
                 pending = _outbox?.PendingCount ?? 0,
                 failed = _outbox?.DeadLetterCount ?? 0,

@@ -64,6 +64,47 @@ public sealed class ZeusLogbookDb : IDisposable
         => new(Path.Combine(dataDirectory, FileName));
 
     /// <summary>
+    /// Every place a Zeus logbook is known to live, in the order we trust them.
+    ///
+    /// <para>There are two, and they are not alternatives so much as two eras.
+    /// <b>Zeus Link keeps a built-in logbook of its own</b> at
+    /// <c>&lt;Application Support&gt;/ZeusProduct/logbook/zeus-logbook.db</c> —
+    /// same file name, same <c>logs</c> collection, same
+    /// <see cref="LogbookEntrySnapshot"/> documents, different directory. The
+    /// <c>org.openhpsdr.logbook</c> plugin instead writes to the engine's
+    /// <c>HostDataDirectory</c>.</para>
+    ///
+    /// <para>This cost real time to find: the plugin reported "no logbook
+    /// installed" while the operator was looking at a QSO they had just logged.
+    /// Checking one hard-coded path and calling the answer definitive is exactly
+    /// the failure this class keeps producing, so it now checks both and — when
+    /// both exist — refuses to choose. Guessing which of two logbooks the
+    /// operator means is not a decision a synchroniser should make quietly.</para>
+    ///
+    /// <para>The product path is derived as a sibling of the host data
+    /// directory rather than hard-coded, so it moves with a relocated profile.</para>
+    /// </summary>
+    public static IReadOnlyList<string> CandidatePaths(string hostDataDirectory)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(hostDataDirectory))
+        {
+            candidates.Add(Path.Combine(hostDataDirectory, FileName));
+
+            // .../Application Support/Zeus -> .../Application Support/ZeusProduct/logbook
+            var parent = Path.GetDirectoryName(hostDataDirectory.TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (!string.IsNullOrWhiteSpace(parent))
+                candidates.Add(Path.Combine(parent, "ZeusProduct", "logbook", FileName));
+        }
+        return candidates;
+    }
+
+    /// <summary>Those candidates that actually exist on disk.</summary>
+    public static IReadOnlyList<string> FindExisting(string hostDataDirectory)
+        => CandidatePaths(hostDataDirectory).Where(File.Exists).ToList();
+
+    /// <summary>
     /// Is there a logbook here at all?
     ///
     /// <para>The Zeus logbook is a <em>plugin</em> — <c>org.openhpsdr.logbook</c>
@@ -78,16 +119,22 @@ public sealed class ZeusLogbookDb : IDisposable
     /// a contented, permanently idle sync with nothing to say for itself.</para>
     /// </summary>
     public static bool ExistsIn(string dataDirectory)
-        => File.Exists(Path.Combine(dataDirectory, FileName));
+        => FindExisting(dataDirectory).Count > 0;
 
     /// <summary>
     /// What to tell the operator when there is no logbook to attach to. Names the
     /// plugin, because "install the logbook" is not actionable and this is.
     /// </summary>
     public const string NoLogbookMessage =
-        "no Zeus logbook found (" + FileName + " does not exist). The logbook is a " +
-        "plugin, not part of the engine: install \"Zeus Logbook\" (org.openhpsdr.logbook) " +
-        "from the plugin registry. Nothing will sync until it is there.";
+        "no Zeus logbook found. Looked for " + FileName + " in the engine data directory " +
+        "and in ZeusProduct/logbook beside it. Log a QSO in Zeus, or install \"Zeus Logbook\" " +
+        "(org.openhpsdr.logbook) from the feature list. Nothing will sync until one exists.";
+
+    /// <summary>Said when two logbooks exist and the operator has to say which.</summary>
+    public static string AmbiguousLogbookMessage(IEnumerable<string> found) =>
+        "two Zeus logbooks exist and I will not guess between them: " +
+        string.Join(" and ", found) + ". Set the logbook path explicitly in the " +
+        "plugin settings, or remove the one you do not use.";
 
     public ZeusLogbookDb(string path)
     {

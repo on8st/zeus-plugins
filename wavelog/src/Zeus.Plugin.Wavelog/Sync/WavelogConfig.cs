@@ -25,6 +25,13 @@ public sealed record WavelogConfig
     public bool PullEnabled { get; init; } = true;
     public bool RadioEnabled { get; init; }
 
+    /// <summary>
+    /// Explicit override for which logbook file to attach to. Empty means
+    /// discover it. Exists because there are two known locations and there may
+    /// be layouts we have not met.
+    /// </summary>
+    public string LogbookPath { get; init; } = "";
+
     public bool IsUsable => !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);
 
     /// <summary>

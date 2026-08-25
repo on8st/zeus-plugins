@@ -63,11 +63,30 @@ compromise chosen over something better — it is the only mechanism available,
 and it has one real advantage: a backlog logged before the plugin was installed
 goes up on the first scan rather than being silently skipped.
 
-## It needs the Zeus Logbook feature
+## There are two Zeus logbooks
+
+Same file name, same `logs` collection, same `LogbookEntrySnapshot` documents —
+**different directories**:
+
+| | |
+|---|---|
+| `<Application Support>/ZeusProduct/logbook/zeus-logbook.db` | Zeus Link's **built-in** logbook. Present without any plugin |
+| `<engine host data dir>/zeus-logbook.db` | where the `org.openhpsdr.logbook` plugin writes |
+
+This cost real time to find. The plugin reported *"no Zeus logbook found"* while
+the operator was looking at a QSO they had just logged — because it checked one
+path and treated the answer as definitive.
+
+So it now checks both, reports **which file** it attached to in `/status`, and
+when **both** exist it refuses to choose: syncing one while the operator reads
+the other is worse than doing nothing. Set `logbookPath` explicitly to settle it.
+
+## It works better with the Zeus Logbook feature
 
 This is an **extension of the stock logbook**, not a replacement and not a
-logbook of its own. Install **Zeus Logbook** (`org.openhpsdr.logbook`) from the
-Zeus feature list first, or this has nothing to synchronise.
+logbook of its own. It syncs whichever logbook it finds — Zeus Link's built-in
+one, or the `org.openhpsdr.logbook` plugin's — but it needs one of them to
+exist.
 
 A plugin manifest has no way to declare a dependency — there is no `dependsOn`
 or `requires` in the manifest schema or the registry catalogue — so the
@@ -167,7 +186,7 @@ logbook plugin: a separate LiteDB handle writing contract records into
 `zeus-logbook.db`, so every test starts from a log this plugin did not create.
 
 ```sh
-dotnet test                                    # 163 tests, no network, no radio
+dotnet test                                    # 180 tests, no network, no radio
 dotnet run --project tools/FakeWavelog -- 8099 # drive it by hand instead
 ```
 
