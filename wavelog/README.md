@@ -151,7 +151,14 @@ engine and this plugin, downloads the **real** `org.openhpsdr.logbook` v1.1.0
 from the Zeus registry and verifies its checksum, installs both into a throwaway
 sandbox, starts a real station engine, and drives the pair over HTTP.
 
+Credentials for `--live` come from the environment, never from the repo. On this
+machine they live in `~/.config/on8st/wavelog.env` (mode 600, outside any git
+tree); the production copy is separate and belongs to Zeus, which persists what
+you type into the panel.
+
 ```sh
+set -a; . ~/.config/on8st/wavelog.env; set +a
+
 ./tools/zeus-harness/run.sh                     # offline, against the fake Wavelog
 ./tools/zeus-harness/run.sh --live \           # read-only against a real instance
   --station-profile 1                           # needs WAVELOG_URL + WAVELOG_KEY
