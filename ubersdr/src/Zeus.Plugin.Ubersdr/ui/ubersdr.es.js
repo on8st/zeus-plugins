@@ -198,7 +198,7 @@ function UbersdrPanel({ api }) {
 
     h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
       h('button', { style: css.button, disabled: busy || !wall.length, onClick: connectAll },
-        listening ? 'reconnect the wall' : `listen on ${wall.length} receivers`),
+        listening ? 'reconnect' : `listen on ${wall.length} receivers`),
       listening
         ? h('button', { style: css.button, disabled: busy, onClick: disconnectAll }, 'release them')
         : null,
