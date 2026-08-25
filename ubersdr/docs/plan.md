@@ -130,7 +130,19 @@ Ships use case **1** — hear yourself as others hear you.
 A toggle for headphone users, with the reason stated in the panel rather than
 buried. Off by default, and it should stay off by default forever.
 
-## Phase 4 — antenna A/B
+## Phase 4 — BUILT. Antenna A/B
+
+Labels, the comparison table and manual capture are in and confirmed working:
+two captures labelled, table renders with per-receiver deltas.
+
+**Verified with manual captures, not yet with transmissions** — the operator is
+waiting on a cable for the antenna switch. The machinery is identical either way;
+what is untested is only whether the numbers say anything useful about an
+antenna, which is a question about propagation rather than about code.
+
+*(original scope below, for the record)*
+
+### Original scope
 
 Peak-hold SNR per transmission, retained across several, labelled by whatever the
 operator was switching. Turns use case **2** into a measurement instead of an
