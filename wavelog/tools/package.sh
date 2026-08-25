@@ -37,6 +37,15 @@ rm -f "$ZIP"
 # what puts plugin.json at the top level rather than under a directory.
 (cd "$BUILD" && zip -qr "$ZIP" . -x "Zeus.Plugins.Contracts.dll" "*.pdb")
 
+# Render the panel before shipping it — see ubersdr/tools/panel-check.
+if command -v node >/dev/null 2>&1 && [ -d "$PLUGIN_DIR/../ubersdr/tools/panel-check" ]; then
+  for panel in "$BUILD"/ui/*.es.js; do
+    [ -e "$panel" ] || continue
+    node "$PLUGIN_DIR/../ubersdr/tools/panel-check/check.mjs" "$panel" || {
+      echo "ERROR: the panel does not render; refusing to package" >&2; exit 1; }
+  done
+fi
+
 # Fail loudly rather than shipping a package the installer will reject.
 unzip -l "$ZIP" | awk '{print $4}' | grep -qx "plugin.json" \
   || { echo "ERROR: plugin.json is not at the top level of $ZIP" >&2; exit 1; }

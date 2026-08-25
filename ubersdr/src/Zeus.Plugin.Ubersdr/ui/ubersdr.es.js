@@ -117,36 +117,6 @@ function UbersdrPanel({ api }) {
     return () => { alive = false; window.clearInterval(t); };
   }, [api]);
 
-  // Keying is polled fast, and only while receivers are connected — there is no
-  // state stream on the engine, and there is no reason to hammer it when the
-  // panel is merely open. 10 Hz brackets a transmission to about a tenth of a
-  // second, which is nothing beside a 200 ms tune and a multi-second over.
-  const keyedRef = useRef(false);
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      if (sockets.current.size === 0) return;
-      try {
-        const r = await api.callBackend('GET', '/ptt');
-        if (!r.ok || !alive) return;
-        const { keyed } = await r.json();
-        if (keyed === keyedRef.current) return;
-        keyedRef.current = keyed;
-
-        if (keyed) {
-          // Playing audio while the microphone is open is a delayed howl put on
-          // the air. Nothing is audible while keyed, ever.
-          stopPlayback();
-          startRecording();
-        } else {
-          stopRecording();
-        }
-      } catch { /* a restarting engine is not an error worth showing */ }
-    };
-    const t = window.setInterval(tick, 100);
-    return () => { alive = false; window.clearInterval(t); };
-  }, [api, startRecording, stopRecording, stopPlayback]);
-
   const loadReceivers = useCallback(async () => {
     setBusy(true);
     try {
@@ -300,6 +270,36 @@ function UbersdrPanel({ api }) {
       setPlaying(null);
     }
   }, [stopPlayback]);
+
+  // Keying is polled fast, and only while receivers are connected — there is no
+  // state stream on the engine, and there is no reason to hammer it when the
+  // panel is merely open. 10 Hz brackets a transmission to about a tenth of a
+  // second, which is nothing beside a 200 ms tune and a multi-second over.
+  const keyedRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (sockets.current.size === 0) return;
+      try {
+        const r = await api.callBackend('GET', '/ptt');
+        if (!r.ok || !alive) return;
+        const { keyed } = await r.json();
+        if (keyed === keyedRef.current) return;
+        keyedRef.current = keyed;
+
+        if (keyed) {
+          // Playing audio while the microphone is open is a delayed howl put on
+          // the air. Nothing is audible while keyed, ever.
+          stopPlayback();
+          startRecording();
+        } else {
+          stopRecording();
+        }
+      } catch { /* a restarting engine is not an error worth showing */ }
+    };
+    const t = window.setInterval(tick, 100);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [api, startRecording, stopRecording, stopPlayback]);
 
   // Never leave sockets open on someone else's receiver.
   useEffect(() => () => disconnectAll(), [disconnectAll]);

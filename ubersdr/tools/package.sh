@@ -37,6 +37,20 @@ rm -f "$ZIP"
 # what puts plugin.json at the top level rather than under a directory.
 (cd "$BUILD" && zip -qr "$ZIP" . -x "Zeus.Plugins.Contracts.dll" "*.pdb")
 
+# Render the panel before shipping it. `node --check` only parses, and the bug
+# that got past it — a hook whose dependency array names a const declared later
+# in the component — is a ReferenceError on first render, which reaches the
+# operator as "one of the panels failed to render" and nothing else.
+if command -v node >/dev/null 2>&1; then
+  for panel in "$BUILD"/ui/*.es.js; do
+    [ -e "$panel" ] || continue
+    node "$PLUGIN_DIR/tools/panel-check/check.mjs" "$panel" || {
+      echo "ERROR: the panel does not render; refusing to package" >&2; exit 1; }
+  done
+else
+  echo "warning: node not installed; the panel was not render-checked" >&2
+fi
+
 # Fail loudly rather than shipping a package the installer will reject.
 unzip -l "$ZIP" | awk '{print $4}' | grep -qx "plugin.json" \
   || { echo "ERROR: plugin.json is not at the top level of $ZIP" >&2; exit 1; }
