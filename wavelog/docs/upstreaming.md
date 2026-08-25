@@ -38,19 +38,23 @@ registry buys discoverability and automatic updates, nothing more.
 | | Status |
 |---|---|
 | Licence compatible — GPL-2.0-or-later, same as the contracts it links | done |
+| `LICENSE` present, detected by GitHub | done |
+| Source public | done — <https://github.com/on8st/zeus-plugins> |
+| No operator identity in the tree or its history | done — history rewritten |
+| A release the registry can point at, install-verified | done — `wavelog-v0.1.0` |
 | Builds from a clean clone by someone else | done — `ZeusEngineRoot` |
 | No secrets, no machine paths, anonymised commit identity | done — history scanned |
 | ABI honest — `abi 1`, `sdk 1.4.0` | done |
-| **Source public** | **decision needed** |
 | Platform claim honest | done — `any`, with the caveat stated |
-| **Plugin id follows their convention** | **decision needed** |
+| Plugin id follows their convention | done — `be.on8st.zeus.plugins.wavelog` |
 
-### Source has to be public
+### Source is public
 
-Not optional if they distribute it. The plugin links `Zeus.Plugins.Contracts`,
-which is GPL-2.0-or-later, so binaries carry a source obligation. Publishing the
-repo is the cheapest way to satisfy it. That is a decision about the `on8st`
-identity, not a technical step — the history is already clean and anonymised.
+<https://github.com/on8st/zeus-plugins>, GPL-2.0-or-later with the licence text
+included — the plugin links `Zeus.Plugins.Contracts`, so any binary they
+distribute carries a source obligation, and this satisfies it. History was
+rewritten before publication to remove an absolute path carrying the operator's
+name; commit identity is the anonymised forge address throughout.
 
 ### It has only ever run on macOS
 
@@ -103,14 +107,17 @@ Their schema, filled in. `sha256` comes from `tools/package.sh`.
       "sdkMinVersion": "1.4.0",
       "platforms": ["any"],
       "downloadUrl": "https://github.com/on8st/zeus-plugins/releases/download/wavelog-v0.1.0/be.on8st.zeus.plugins.wavelog-0.1.0.zip",
-      "sha256": "<from tools/package.sh>"
+      "sha256": "ae0aa34093048463a23bb6571801b75b10b752d858d92ad356dd1b9709bf9e8e"
     }
   ]
 }
 ```
 
 A GitHub release URL is HTTPS and satisfies the installer, so they need not host
-the artefact themselves unless they prefer to.
+the artefact themselves unless they prefer to. **This entry is not hypothetical:**
+the release exists, and the engine was pointed at that exact URL and sha256 via
+`{"source":"zip-url"}` in a sandbox — it downloaded, verified, extracted and
+activated. Whoever evaluates this can do the same before deciding.
 
 ## Draft issue
 
@@ -129,8 +136,10 @@ the artefact themselves unless they prefer to.
 > log untouched.
 >
 > GPL-2.0-or-later, same as the contracts it links. Source, tests and an
-> end-to-end harness are at `<repo>`. It's been running against a live Zeus Link
-> and a live Wavelog.
+> end-to-end harness are at <https://github.com/on8st/zeus-plugins>, and there's
+> a release at `wavelog-v0.1.0` if it's easier to try than to build. It's been
+> running against a live Zeus Link and a live Wavelog; tested on macOS only so
+> far.
 >
 > Two things I couldn't answer from the public repo:
 >
