@@ -9,6 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="LiteDB" Version="5.0.21" />
-    <ProjectReference Include="../../../../station-engine/Zeus.Plugins.Contracts/Zeus.Plugins.Contracts.csproj" />
+    <ProjectReference Include="$(ZeusContractsProject)" />
   </ItemGroup>
 </Project>

@@ -18,7 +18,7 @@
     <!-- The host resolves the contracts from the default load context, so the
          plugin must NOT ship its own copy: Private=false. See
          docs/plugin-framework-how-to.md §10. -->
-    <ProjectReference Include="../../../../station-engine/Zeus.Plugins.Contracts/Zeus.Plugins.Contracts.csproj" Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="$(ZeusContractsProject)" Private="false" ExcludeAssets="runtime" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="LiteDB" Version="5.0.21" />

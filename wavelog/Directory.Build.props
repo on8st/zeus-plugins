@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+    Where the Zeus station-engine source sits, for the Zeus.Plugins.Contracts
+    project reference.
+
+    Defaults to a sibling checkout, which is the layout that falls out of
+    cloning both repos next to each other. Override for anything else:
+
+      dotnet build -p:ZeusEngineRoot=/path/to/station-engine
+
+    This used to be an absolute path to one machine's home directory, which
+    meant the repo built for exactly one person.
+  -->
+  <PropertyGroup>
+    <ZeusEngineRoot Condition="'$(ZeusEngineRoot)' == ''">$(MSBuildThisFileDirectory)../../station-engine</ZeusEngineRoot>
+    <ZeusContractsProject>$(ZeusEngineRoot)/Zeus.Plugins.Contracts/Zeus.Plugins.Contracts.csproj</ZeusContractsProject>
+  </PropertyGroup>
+
+</Project>
