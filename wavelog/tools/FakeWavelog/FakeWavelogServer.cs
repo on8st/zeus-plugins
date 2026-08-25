@@ -181,7 +181,7 @@ public sealed class FakeWavelogServer : IDisposable
                 if (duplicate)
                 {
                     duplicates.Add(
-                        $"Date/Time: {timeKey} Callsign: {call} Band: {band} Duplicate for ON8ST<br>");
+                        $"Date/Time: {timeKey} Callsign: {call} Band: {band} Duplicate for ON0XYZ<br>");
                     continue;
                 }
 

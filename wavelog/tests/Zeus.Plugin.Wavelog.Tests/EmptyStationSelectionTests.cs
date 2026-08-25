@@ -103,7 +103,7 @@ public sealed class EmptyStationSelectionTests : IDisposable
     [Fact]
     public async Task The_server_refuses_a_genuinely_empty_selection()
     {
-        // Verbatim from wavelog.on8st.be. The transport must never send this
+        // Verbatim from a real instance. The transport must never send this
         // shape; the fake reproduces the refusal so that if it ever does, a test
         // fails rather than a live sync.
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };

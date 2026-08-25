@@ -3,8 +3,7 @@
 Keep Zeus's own logbook and a Wavelog instance in step, both directions.
 
 - Framework reference: [`docs/plugin-framework-how-to.md`](../../../../docs/plugin-framework-how-to.md)
-- Target: `wavelog.on8st.be` — Wavelog (Cloudlog fork) in Docker on the
-  multihost, loopback `127.0.0.1:8086` behind Caddy
+- Target: a self-hosted Wavelog (Cloudlog fork) reached over HTTPS
 - Plugin id: `be.on8st.zeus.plugins.wavelog`
 
 ---
@@ -48,7 +47,7 @@ So there is nothing to migrate and no second copy to keep honest. **Attach to
 that file as a second handle and synchronise it.**
 
 ```
-Zeus Link ──► native logbook plugin ──► zeus-logbook.db  ── entries
+Zeus Link ──► its own logbook ──────────► zeus-logbook.db  ── logs   
                                               ▲   │
                                               │   │ scan every 30s
                               insert / confirm│   ▼
@@ -96,7 +95,7 @@ is not on that path at all and could not block it if it tried.
 The network stays strictly downstream:
 
 ```
-Zeus logs ──► entries ──► [scan] ──► outbox ──► pump ──► Wavelog  (retry, backoff)
+Zeus logs ──► logs ──► [scan] ──► outbox ──► pump ──► Wavelog  (retry, backoff)
 ```
 
 **The outbox is still the heart of this plugin**, not the HTTP call. It is also
@@ -278,8 +277,9 @@ default run needs no network, no radio, and no live server.
 
 ## 6. Wavelog's API — verified against source
 
-Read from `wavelog/wavelog` at `af32561` (2026-08-09), cloned to
-`~/Repos/on8st/wavelog`. Not from memory.
+Read from the `wavelog/wavelog` source at `af32561` (2026-08-09), cloned
+locally. Not from memory — and see §12 for the three places that reading was
+still wrong.
 
 ### Write
 
@@ -614,8 +614,8 @@ engine, the real registry logbook plugin, verified by checksum, driven over HTTP
 
 ### The collection is `logs`, not `entries`
 
-`entries` is the reference plugin's HTTP *route*. I took it from the assembly's
-string table and called it verified. Both sides of every test used the same wrong
+`entries` is an HTTP *route*, not a collection. I took it from a string table
+and called it verified. Both sides of every test used the same wrong
 name, so nothing failed. Shipped, it would have attached to an empty collection
 and reported a healthy, permanently idle sync — the exact silent failure §1 named
 as the design's main exposure, arriving by a route §1 did not anticipate.

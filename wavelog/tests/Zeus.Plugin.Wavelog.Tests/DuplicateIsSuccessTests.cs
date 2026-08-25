@@ -14,13 +14,13 @@ namespace Zeus.Plugin.Wavelog.Tests;
 /// leaned on that and called the retry question closed.</para>
 ///
 /// <para>What a real instance actually returns for that retry is <b>HTTP 400,
-/// <c>status: "abort"</c></b>, with <c>"Duplicate for ON8ST"</c> among the
+/// <c>status: "abort"</c></b>, with <c>"Duplicate for ON0XYZ"</c> among the
 /// messages — and the retry policy dead-letters a 400. So the operator would see
 /// a permanent failure for a QSO sitting in their log, and pressing retry would
 /// fail forever. The queue would never drain and the number would never mean
 /// anything again.</para>
 ///
-/// <para>Found by pushing the same contact twice at wavelog.on8st.be. The fake
+/// <para>Found by pushing the same contact twice at a real instance. The fake
 /// used to answer "created" with a zero count, so nothing here could fail.</para>
 /// </summary>
 public sealed class DuplicateIsSuccessTests : IDisposable
@@ -69,10 +69,10 @@ public sealed class DuplicateIsSuccessTests : IDisposable
     [Fact]
     public void The_real_duplicate_reply_is_read_as_a_duplicate()
     {
-        // Verbatim from wavelog.on8st.be, including the empty first message.
+        // Verbatim from a real instance, including the empty first message.
         var reply = JsonNode.Parse("""
             {"status":"abort","type":"adif","string":"","adif_count":1,"adif_errors":1,
-             "messages":["","Date/Time: 2026-01-01 12:00:00 Callsign: ON0HARNESS Band: 20m Duplicate for ON8ST<br>"]}
+             "messages":["","Date/Time: 2026-01-01 12:00:00 Callsign: ON0HARNESS Band: 20m Duplicate for ON0XYZ<br>"]}
             """);
 
         Assert.True(HttpWavelogTransport.IsOnlyDuplicates(reply));
@@ -84,7 +84,7 @@ public sealed class DuplicateIsSuccessTests : IDisposable
         // Strictness on purpose: a genuine problem must not hide behind a benign
         // one just because they arrived in the same reply.
         var reply = JsonNode.Parse("""
-            {"status":"abort","messages":["","Duplicate for ON8ST<br>","Invalid band: 21m<br>"]}
+            {"status":"abort","messages":["","Duplicate for ON0XYZ<br>","Invalid band: 21m<br>"]}
             """);
 
         Assert.False(HttpWavelogTransport.IsOnlyDuplicates(reply));

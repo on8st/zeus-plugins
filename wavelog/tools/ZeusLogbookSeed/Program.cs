@@ -10,7 +10,7 @@
 // a zeus-logbook.db, opened shared, using LiteDB's default mapper.
 //
 // That shape is not guessed. It was read out of a real product logbook:
-//   {"_id":"…","QsoDateTimeUtc":{"$date":…},"Callsign":"ON8ST/TEAT",
+//   {"_id":"…","QsoDateTimeUtc":{"$date":…},"Callsign":"ON0TEST",
 //    "FrequencyMhz":3.727,"Band":"80m","Mode":"SSB","RstSent":"59",
 //    "RstRcvd":"59","CreatedUtc":{"$date":…}}
 //

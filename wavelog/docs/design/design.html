@@ -131,7 +131,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
   <p class="standfirst">A station-engine plugin that keeps Zeus’s <em>own</em> logbook and a Wavelog instance in step, both directions. It began as a logbook replacement; the more interesting design is the one that gives the logbook back.</p>
   <p class="docmeta">
     <span><b>Plugin id</b> be.on8st.zeus.plugins.wavelog</span>
-    <span><b>Target</b> wavelog.on8st.be</span>
+    <span><b>Target</b> self-hosted Wavelog</span>
     <span><b>SSOT</b> source/design.md</span>
   </p>
 </header>
@@ -180,8 +180,8 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
       <text class="nsub" x="595" y="50" text-anchor="middle">zeus-logbook.db</text>
 
       <rect class="nbox" x="470" y="66" width="250" height="56" rx="2"/>
-      <text class="nlbl" x="595" y="90" text-anchor="middle">entries</text>
-      <text class="nsub" x="595" y="108" text-anchor="middle">logs — LogbookEntrySnapshot</text>
+      <text class="nlbl" x="595" y="90" text-anchor="middle">logs</text>
+      <text class="nsub" x="595" y="108" text-anchor="middle">LogbookEntrySnapshot — Zeus’s</text>
 
       <rect class="nbox-a" x="470" y="140" width="250" height="56" rx="2"/>
       <text class="nlbl" x="595" y="164" text-anchor="middle">wavelog_sync</text>
@@ -218,7 +218,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 
       <rect class="nbox" x="752" y="358" width="180" height="56" rx="2"/>
       <text class="nlbl" x="842" y="382" text-anchor="middle">Wavelog</text>
-      <text class="nsub" x="842" y="400" text-anchor="middle">multihost · Caddy</text>
+      <text class="nsub" x="842" y="400" text-anchor="middle">self-hosted · HTTPS</text>
 
       <line class="ln-w" x1="254" y1="386" x2="396" y2="386" marker-end="url(#s-w)"/>
       <text class="nsub nw" x="325" y="378" text-anchor="middle">lease</text>
@@ -404,7 +404,7 @@ footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13.5px;
 
   <div class="note"><b>The seventh group is the one the reframe added, and it needs a second Zeus.</b> <code>NativeLogbook</code> in the test project plays Zeus’s own logbook plugin: its own <code>LiteDatabase</code>, opened the way the reference opens it, writing contract records into <code>zeus-logbook.db</code>. Every test starts from a log this plugin did not create — which is the only way the shared-mode claim can be held at all, because a fake would satisfy it for free and prove nothing.</div>
 
-  <div class="note"><b>Integration tests come last and stay opt-in.</b> Everything above runs against <code>tools/FakeWavelog</code>, a local stand-in implementing the endpoints and semantics read out of Wavelog’s own source. A real <code>wavelog.on8st.be</code> belongs in a separate project, so the default run — 151 tests — needs no network, no live server and no radio.</div>
+  <div class="note"><b>Integration tests come last and stay opt-in.</b> Everything above runs against <code>tools/FakeWavelog</code>, a local stand-in implementing the endpoints and semantics read out of Wavelog’s own source. A real instance belongs in a separate opt-in project, so the default run — 180 tests — needs no network, no live server and no radio.</div>
 </section>
 
 <section>

@@ -21,7 +21,7 @@ public class WavelogJsonQuirksTests
     [Fact]
     public void Lastfetchedid_arrives_as_a_string_on_a_real_instance()
     {
-        // Verbatim from wavelog.on8st.be: the cursor is quoted, the count is not.
+        // Verbatim from a real instance: the cursor is quoted, the count is not.
         var reply = JsonNode.Parse(
             """{"status":"successful","lastfetchedid":"1","exported_qsos":1,"adif":"x"}""")!;
 
@@ -56,7 +56,7 @@ public class WavelogJsonQuirksTests
         // Which is why the profile list parses it with TryParse rather than
         // GetValue<int>. Same class of bug, caught earlier by luck.
         var reply = JsonNode.Parse(
-            """[{"station_id":"1","station_profile_name":"Keerbergen"}]""")!;
+            """[{"station_id":"1","station_profile_name":"Home"}]""")!;
         Assert.Equal(1, HttpWavelogTransport.ReadInt(reply[0]!["station_id"]));
     }
 }
