@@ -10,10 +10,12 @@ attaches to the same database file and moves contacts across.
 
 Design: [`docs/design/`](docs/design/) · Prompts: [`prompts/`](prompts/)
 
-**Status: runs inside a real station engine alongside the real Zeus Logbook
-plugin, and syncs both directions with a live Wavelog — pushed, pulled, and
-deduplicated on retry against a dedicated station location. Not yet run under
-Zeus Link, so the panel is unproven.** See *Before you trust it*.
+**Status: running in production.** Installed in Zeus Link, attached to the
+built-in logbook, syncing both directions with a live Wavelog: a contact logged
+in Zeus reached the server, nine logged elsewhere reached Zeus, the panel
+configures it, and a resync dry run reports zero drift. The confirmation sweep is
+the one path still unexercised against real data — nothing in the log is
+LoTW/QSL-confirmed yet. See *Before you trust it*.
 
 ## What it does
 
