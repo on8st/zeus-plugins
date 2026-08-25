@@ -101,7 +101,15 @@ The smallest useful thing, and half the machinery for everything after.
 **Testable without a network:** directory parsing, filtering and ranking are pure
 functions. Band-from-frequency is a pure function. Both get unit tests.
 
-## Phase 2 — the monitor proper
+## Phase 2 — DONE. The monitor proper
+
+Built, installed, and confirmed by the operator: receivers record while the key
+is down, and each recording plays back after unkey with the peak signal-to-noise
+of that over beside it. This was the actual requirement.
+
+*(original scope below, for the record)*
+
+### Original scope
 
 - Watch keying. On key-down, connect (or unmute) the chosen receivers tuned to
   the **transmit** frequency — `splitTxHz` when `splitEnabled`, `vfoHz`
