@@ -111,8 +111,13 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
     /// keep trying, because the operator may install the logbook at any moment
     /// and should not have to restart the engine afterwards.</para>
     /// </summary>
+    private readonly object _attachGate = new();
+
     private bool TryAttachLogbook()
     {
+        if (_logbook is not null) return true;      // fast path, no lock
+        lock (_attachGate)
+        {
         if (_logbook is not null) return true;
 
         if (!ZeusLogbookDb.ExistsIn(_dataDirectory))
@@ -138,6 +143,7 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
             "wavelog: attached to the native logbook ({Count} QSOs), configured={Configured}",
             _logbook.Count(), _config.IsUsable);
         return true;
+        }
     }
 
     private void StartBackground(CancellationToken ct)
@@ -305,6 +311,11 @@ public sealed class WavelogSyncPlugin : IZeusPlugin, IBackendPlugin
 
         endpoints.MapGet("status", () =>
         {
+            // Attach on demand as well as on the timer. The operator installs
+            // the logbook and opens this panel seconds later; waiting out the
+            // scan interval would show them a stale "not installed" and invite
+            // them to conclude it had not worked.
+            TryAttachLogbook();
             var c = CurrentConfig();
             return Results.Ok(new
             {

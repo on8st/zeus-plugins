@@ -151,6 +151,30 @@ function WavelogPanel({ api }) {
 
   return h('div', { style: css.panel },
 
+    // The dependency, where the operator actually looks. A plugin manifest has
+    // no way to declare one, so without this the only symptom of a missing
+    // logbook is that nothing ever happens. The settings stay visible and
+    // editable underneath: configuring before installing the logbook is
+    // legitimate, and the values apply the moment it appears.
+    status && status.logbookInstalled === false
+      ? h('div', {
+          style: {
+            border: '1px solid var(--danger, #e5715f)', borderRadius: 3,
+            padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
+          },
+        },
+          h('div', { style: { fontWeight: 600, color: 'var(--danger, #e5715f)' } },
+            'The Zeus Logbook feature is not installed'),
+          h('div', { style: { ...css.note, lineHeight: 1.5 } },
+            'This is an extension of the stock logbook. It keeps your log in step '
+            + 'with Wavelog, but it is not a logbook itself and has nothing to '
+            + 'synchronise on its own.'),
+          h('div', { style: { ...css.note, lineHeight: 1.5 } },
+            'Install Zeus Logbook (org.openhpsdr.logbook) from the feature list, '
+            + 'then come back. No restart needed \u2014 this picks it up within '
+            + 'half a minute. Settings below are saved meanwhile.'))
+      : null,
+
     // Say plainly what this is. An operator who thinks the plugin *is* their
     // logbook will read every button here as riskier than it is.
     h('div', { style: css.note },

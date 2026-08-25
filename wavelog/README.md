@@ -63,6 +63,27 @@ compromise chosen over something better — it is the only mechanism available,
 and it has one real advantage: a backlog logged before the plugin was installed
 goes up on the first scan rather than being silently skipped.
 
+## It needs the Zeus Logbook feature
+
+This is an **extension of the stock logbook**, not a replacement and not a
+logbook of its own. Install **Zeus Logbook** (`org.openhpsdr.logbook`) from the
+Zeus feature list first, or this has nothing to synchronise.
+
+A plugin manifest has no way to declare a dependency — there is no `dependsOn`
+or `requires` in the manifest schema or the registry catalogue — so the
+dependency is handled three ways instead, none of them silent:
+
+- the manifest **description** says it, which is what you read before installing
+- the **panel** shows a banner when the logbook is absent, and keeps the settings
+  visible underneath so you can configure ahead of time
+- the plugin **never creates `zeus-logbook.db` itself** and says which id to
+  install, once, in the engine log
+
+Installing the logbook afterwards needs **no restart** — this attaches within
+half a minute, or immediately when the panel next reads `/status`. Verified by
+hot-installing the logbook into a running engine that already had this plugin
+loaded.
+
 ## Configuring it
 
 Through the **Wavelog Sync** panel in the workspace tools. The same surface is

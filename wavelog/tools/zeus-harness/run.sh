@@ -85,6 +85,17 @@ cp -R "$PLUGIN_DIR/src/Zeus.Plugin.Wavelog/bin/Release/net10.0/" "$SANDBOX/featu
 rm -f "$SANDBOX/features/on8st.wavelog/Zeus.Plugins.Contracts.dll"
 ok "both plugins installed into the sandbox"
 
+# The panel is plain ES with no build step, so nothing else would catch a syntax
+# error before Zeus Link silently failed to render it.
+if command -v node >/dev/null 2>&1; then
+  sed "s|^import React.*|const React={createElement(){}};const useCallback=f=>f,useEffect=()=>{},useState=()=>[];|" \
+    "$SANDBOX/features/on8st.wavelog/ui/wavelog.es.js" > "$SANDBOX/panel-check.mjs"
+  if node --check "$SANDBOX/panel-check.mjs" 2>/dev/null; then ok "panel module parses"
+  else bad "panel module has a syntax error"; fi
+else
+  echo "  --   node not installed; panel syntax unchecked"
+fi
+
 # ---- wavelog ----------------------------------------------------------------
 if [ "$LIVE" = "1" ]; then
   : "${WAVELOG_URL:?--live needs WAVELOG_URL}"
