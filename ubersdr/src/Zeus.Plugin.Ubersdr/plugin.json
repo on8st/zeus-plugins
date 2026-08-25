@@ -4,14 +4,20 @@
   "name": "UberSDR",
   "version": "0.1.0",
   "author": "on8st",
-  "description": "TODO — what it does, and what it is not.",
+  "description": "Probe build \u2014 reports which host services a plugin actually receives.",
   "homepage": "https://github.com/on8st/zeus-plugins",
   "license": "GPL-2.0-or-later",
-  "sdk": { "abi": 1, "minVersion": "1.4.0" },
+  "sdk": {
+    "abi": 1,
+    "minVersion": "1.4.0"
+  },
   "entrypoint": {
     "assembly": "Zeus.Plugin.Ubersdr.dll",
     "type": "Zeus.Plugin.Ubersdr.UbersdrPlugin"
   },
-  "capabilities": [],
+  "capabilities": [
+    "ReadRadioState",
+    "ControlRadio"
+  ],
   "permissions": {}
 }

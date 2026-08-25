@@ -9,27 +9,72 @@ Fuses use cases 1 and 2. It is the first thing worth building here because it
 changes what the operator can *do*, not what they can look at, and because
 everything it needs turned out to exist.
 
-## What the framework actually provides
+## What the plugin framework actually provides: nothing useful here
 
-Two corrections to earlier notes in this repository, both found by reading
-`IPluginContext` properly rather than skimming it:
+Both "corrections" I made to this document were themselves wrong, and only a
+runtime probe found it. The contracts declare `IRadioStateReader`,
+`IRadioController` and `IAudioPlaybackSink` — but every one is a
+`GetService<T>()` lookup in `PluginManager`, and **nothing implements or
+registers any of them**, not in the published source and not in the shipped
+build.
 
-- **A plugin can control the radio.** `IPluginContext.RadioController`
-  (`IRadioController`) offers `SetFrequencyAsync`, `SetModeAsync`,
-  `SetMoxAsync`, gated by the `ControlRadio` capability. An earlier note here
-  said a plugin cannot retune; that was wrong.
-- **A plugin can play audio into Zeus.** `IPluginContext.Playback`
-  (`IAudioPlaybackSink`) mixes mono float32 into the operator's local monitor —
-  the RX audio bus — inside a `BeginLocalMonitor()` session, paced by the host's
-  RX clock. It also exposes `IsMoxOn`, and `PlayOnAir` for injecting into the TX
-  chain (which never keys by itself).
+A probe plugin declaring `ReadRadioState` and `ControlRadio`, run in both:
 
-So the monitor does **not** have to live in the browser. It can be a backend
-plugin that streams server-side and plays through Zeus's own audio device.
+```
+                     source engine v2.0.9    shipped Zeus Link 2.0.12
+Radio                NULL                    NULL
+RadioController      NULL                    NULL
+Playback             NULL                    NULL
+Qrz                  NULL                    NULL
+OperatorIdentity     NULL                    NULL
+```
 
-What is still true: a plugin cannot be a *receiver* — remote IQ cannot enter the
-DSP chain to be filtered, notched or noise-reduced. Playback is a monitor bus,
-not a demodulator. That distinction is the whole design.
+So through `IPluginContext` a plugin **cannot** read the frequency, know when
+the operator keys, retune anything, or play a single sample into Zeus. What is
+left is settings, logging, HTTP routes and a UI panel.
+
+This also means the Wavelog synchroniser's rig-state publishing can never have
+worked: it is guarded by `if (context.Radio is { } radio)`, and that is always
+false. Dead code, not a bug — but it should stop being advertised.
+
+## The route that does work: the engine's own HTTP API
+
+The plugin API is not the only surface. The engine serves `GET /api/state` on
+its own port, and it carries more than the plugin contract ever offered:
+
+```
+vfoHz            7200000        mode   LSB
+splitEnabled     false          splitTxHz  0        txVfo  A
+txMonitorEnabled false          rx2AudioMode Both   txReceiverIndex 0
+```
+
+`splitEnabled` and `splitTxHz` answer the split question outright — the transmit
+frequency is exposed separately and does not have to be inferred.
+
+`GET /api/radio/ptt-status` carries the keying state:
+
+```
+{ "moxOn": false, "tunOn": false, "twoToneOn": false, "cwKeyDown": null,
+  "ownedMox": false, "hangTimeMs": 250, "moxOwner": null }
+```
+
+So the monitor gets its radio state from the engine over HTTP rather than from
+`IPluginContext`. A backend plugin can call it on loopback; the panel can too,
+being served from the same origin.
+
+## Audio: the panel, and only the panel
+
+With `IAudioPlaybackSink` null, remote audio cannot enter Zeus at all. The one
+remaining path is the panel: `wss://<host>/ws` straight from the webview, Opus
+into an `AudioContext`. WebSocket is not subject to CORS, and several sockets can
+be open at once.
+
+That forces the feedback question rather than merely raising it. Audio played by
+the panel goes to the browser's output device with **no relationship to Zeus's
+audio routing and no knowledge of MOX**. Headphones stop being a recommendation
+and become a requirement, and *record-while-keyed, replay-on-unkey* stops being
+the safer default and becomes the only responsible one — the panel can poll
+`ptt-status`, or watch it over the state stream, to know the window.
 
 ## The UberSDR side
 
@@ -92,25 +137,38 @@ that says why.
 
 ## Open questions
 
-1. **Is `PlayLocal` audible while MOX is on?** The sink documents a
-   "local-monitor (preview) path" and exposes `IsMoxOn`, which suggests the host
-   has opinions during transmit. Live monitoring depends on the answer;
-   record-and-replay does not. **Test before designing around it.**
-2. **Split operation.** `IRadioStateReader` exposes a single `FrequencyHz`. If
-   that is the RX VFO, split transmit would monitor the wrong frequency —
-   silently. Establish what it reports before trusting the reading.
-3. **Opus in .NET.** Needs a decoder in the plugin; Concentus is pure managed and
-   the obvious candidate. Check the licence.
-4. **Courtesy.** Each monitored receiver occupies a client slot on someone
-   else's hardware. Connect around transmit rather than camping, honour
-   `available_clients`, and never auto-connect more than the operator chose.
-5. **Latency alignment.** The SNR figure arrives seconds after the speech that
-   caused it. For "how strong am I", peak-hold across the transmission is more
-   honest than an instantaneous reading.
+Both original questions are now answered, and not as hoped:
+
+1. ~~Is `PlayLocal` audible while MOX is on?~~ **Moot — `Playback` is null.**
+   Even had it existed, the drain is gated behind `ShouldPublishNormalRxAudio`,
+   which is false while transmit suppresses RX audio, so it would not have been
+   audible while keyed anyway.
+2. ~~What does `FrequencyHz` report under split?~~ **Moot — `Radio` is null.**
+   `GET /api/state` exposes `splitEnabled` and `splitTxHz` separately, which is
+   a better answer than the contract could have given.
+
+What remains open:
+
+3. **Is `/api/state` stable?** It is the engine's own API, not a plugin contract,
+   so nothing promises it. Depending on it means tracking engine releases —
+   acceptable, but it should be an explicit decision, and `schemaVersion` in the
+   ptt response suggests upstream thinks about compatibility here.
+4. **How does the panel reach the engine?** Same origin is likely but unverified.
+   If not, a backend route proxying `/api/state` is a two-line fallback.
+5. **Live updates or polling?** `StreamingHub` exists; whether state and PTT are
+   on it is unchecked. Polling `ptt-status` at a few Hz would work but is crude.
+6. **Opus in the browser.** UberSDR's own client uses `OpusDecoder`; the panel
+   would need the same, and it must be vendored rather than fetched from a CDN.
+7. **Courtesy.** Unchanged: connect around transmit, honour `available_clients`,
+   and ask upstream before polling the directory from every install.
 
 ## Why this one first
 
-Everything it needs now exists and has been checked: radio state and events, a
-playback path into Zeus, a documented tune command, a true SNR, and a public
-directory to choose receivers from. The remaining unknowns are two tests and a
-licence check, not a research programme.
+Everything it needs exists — just not where this document first assumed. Radio
+state and keying come from the engine's HTTP API, audio and SNR from UberSDR's
+WebSocket in the panel, receiver choice from the public directory. The plugin
+contract contributes settings, a route and a panel, and nothing else.
+
+It is still the right first build: it is the only one of the ten use cases whose
+every dependency has now been verified at runtime rather than read hopefully off
+an interface.
