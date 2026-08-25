@@ -53,6 +53,9 @@ const css = {
             border: '1px solid var(--border, #2a2e35)', borderRadius: 3,
             padding: '5px 10px', font: 'inherit', cursor: 'pointer' },
   bad: { color: 'var(--danger, #e5715f)' },
+  input: { background: 'var(--bg-2, #16181d)', color: 'var(--fg, #e6e8ea)',
+           border: '1px solid var(--border, #2a2e35)', borderRadius: 3,
+           padding: '3px 6px', font: 'inherit', fontSize: 12 },
 };
 
 // 0 dB reads as empty, 60 dB as full. Chosen from the live probe, which saw
@@ -89,6 +92,63 @@ function Tile({ rx, reading }) {
           : reading?.state ?? 'idle')));
 }
 
+// Antenna comparison.
+//
+// Read this DOWN the columns, never across the rows. One receiver against
+// itself minutes apart is a fair comparison — same site, same noise floor, so
+// the difference is the operator's. One receiver against another is not: a
+// quiet rural site reads better than a suburban one for an identical signal.
+// The table is laid out to make the sound reading the easy one.
+function Comparison({ takes, hosts }) {
+  const labelled = takes.filter((t) => t.label.trim()).slice().reverse();   // oldest first
+  if (labelled.length < 2) return null;
+
+  const baseline = labelled[0];
+  const peak = (take, host) => take.rows.find((r) => r.host === host)?.peakSnr ?? null;
+
+  const cell = (key, v, delta) => h('td', {
+    key,
+    style: {
+      padding: '3px 8px', textAlign: 'right', whiteSpace: 'nowrap',
+      fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+      color: delta == null ? undefined
+        : delta > 0 ? 'var(--success, #4fbfa0)'
+        : delta < 0 ? 'var(--danger, #e5715f)' : undefined,
+    },
+  }, v);
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+    h('div', { style: { ...css.note, textTransform: 'uppercase', letterSpacing: '.1em' } },
+      'comparison'),
+    h('div', { style: { overflowX: 'auto' } },
+      h('table', { style: { borderCollapse: 'collapse', fontSize: 12 } },
+        h('thead', null,
+          h('tr', null,
+            h('th', { style: { textAlign: 'left', padding: '3px 8px' } }, ''),
+            hosts.map((host) =>
+              h('th', { key: host, style: { padding: '3px 8px', textAlign: 'right', fontWeight: 600 } },
+                host.split('.')[0])))),
+        h('tbody', null,
+          labelled.map((take, i) =>
+            h('tr', { key: take.at.getTime(), style: { borderTop: '1px solid var(--border, #2a2e35)' } },
+              h('td', { style: { padding: '3px 8px', whiteSpace: 'nowrap' } }, take.label),
+              hosts.map((host) => {
+                const v = peak(take, host);
+                const b = peak(baseline, host);
+                const d = i === 0 || v == null || b == null ? null : v - b;
+                return cell(host,
+                  v == null ? '—'
+                    : d == null ? `${v.toFixed(0)}`
+                    : `${v.toFixed(0)}  ${d > 0 ? '+' : ''}${d.toFixed(0)}`,
+                  d);
+              })))))),
+    h('div', { style: css.note },
+      `dB peak, against “${baseline.label.trim()}”. Compare a column against itself — `
+      + 'the difference between two receivers is mostly the difference between their '
+      + 'noise floors, not your signal. Back-to-back overs are worth more than ones '
+      + 'minutes apart: propagation drifts.'));
+}
+
 function UbersdrPanel({ api }) {
   const [radio, setRadio] = useState(null);
   const [wall, setWall] = useState([]);
@@ -99,7 +159,11 @@ function UbersdrPanel({ api }) {
   const [takes, setTakes] = useState([]);        // finished recordings, newest first
   const [playing, setPlaying] = useState(null);  // host currently being played back
   const sockets = useRef(new Map());
-  const recording = useRef({ active: false, byHost: new Map(), startedAt: 0 });
+  const recording = useRef({ active: false, byHost: new Map(), startedAt: 0, source: 'keyed' });
+  // Declared with the other refs, not beside the effect that drives it: a
+  // binding used by a callback above its own declaration is the shape of the
+  // temporal-dead-zone bug that already took this panel down once.
+  const keyedRef = useRef(false);
   const audio = useRef({ ctx: null, source: null, decoder: null });
 
   // The radio is polled rather than subscribed to: the engine's own /ws carries
@@ -197,8 +261,9 @@ function UbersdrPanel({ api }) {
 
   // ---- recording, bracketed by the key -----------------------------------
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback((source = 'keyed') => {
     const rec = recording.current;
+    rec.source = source;
     rec.byHost = new Map();
     for (const host of sockets.current.keys())
       rec.byHost.set(host, { frames: [], sampleRate: 48000, peakSnr: null, snrCount: 0 });
@@ -223,7 +288,15 @@ function UbersdrPanel({ api }) {
       .filter((r) => r.frames.length > 0);
 
     if (rows.length === 0) return;
-    setTakes((prev) => [{ at: new Date(), seconds, rows }, ...prev].slice(0, 8));
+    setTakes((prev) => [{
+      at: new Date(),
+      seconds,
+      rows,
+      source: rec.source,
+      // Labelled after the fact: an operator switching antennas knows what they
+      // just did, and typing before transmitting is one more thing to forget.
+      label: '',
+    }, ...prev].slice(0, 12));
   }, []);
 
   // ---- playback ------------------------------------------------------------
@@ -271,11 +344,38 @@ function UbersdrPanel({ api }) {
     }
   }, [stopPlayback]);
 
+  // A capture that does not need the key.
+  //
+  // Antenna comparison is the point of the table below, and it is measured from
+  // transmissions — but the same machinery answers "what do these six receivers
+  // hear right now", and it makes the whole feature usable and testable by
+  // someone who cannot transmit at this moment. Same recording path, same peak
+  // hold; only the trigger differs.
+  const [capturing, setCapturing] = useState(0);
+  const captureFor = useCallback(async (seconds) => {
+    if (sockets.current.size === 0) {
+      setMessage({ bad: true, text: 'connect some receivers first' });
+      return;
+    }
+    if (keyedRef.current) {
+      setMessage({ bad: true, text: 'already recording — you are keyed' });
+      return;
+    }
+    stopPlayback();
+    startRecording('manual');
+    setCapturing(seconds);
+    for (let left = seconds; left > 0; left--) {
+      await new Promise((r) => window.setTimeout(r, 1000));
+      setCapturing(left - 1);
+    }
+    stopRecording();
+    setCapturing(0);
+  }, [startRecording, stopRecording, stopPlayback]);
+
   // Keying is polled fast, and only while receivers are connected — there is no
   // state stream on the engine, and there is no reason to hammer it when the
   // panel is merely open. 10 Hz brackets a transmission to about a tenth of a
   // second, which is nothing beside a 200 ms tune and a multi-second over.
-  const keyedRef = useRef(false);
   useEffect(() => {
     let alive = true;
     const tick = async () => {
@@ -339,6 +439,12 @@ function UbersdrPanel({ api }) {
         ? h('button', { style: css.button, disabled: busy, onClick: disconnectAll }, 'release them')
         : null,
       h('button', { style: css.button, disabled: busy, onClick: loadReceivers }, 'refresh list'),
+      listening
+        ? h('button', {
+            style: css.button, disabled: busy || capturing > 0,
+            onClick: () => captureFor(6),
+          }, capturing > 0 ? `capturing… ${capturing}s` : 'capture 6 s without transmitting')
+        : null,
       message ? h('span', { style: message.bad ? css.bad : null }, message.text) : null),
 
     h('div', { style: css.grid },
@@ -354,9 +460,23 @@ function UbersdrPanel({ api }) {
               style: { border: '1px solid var(--border, #2a2e35)', borderRadius: 3, padding: '8px 10px',
                        display: 'flex', flexDirection: 'column', gap: 5 },
             },
-              h('div', { style: css.note },
-                `${take.at.toLocaleTimeString()} · ${take.seconds.toFixed(1)} s`
-                + (ti === 0 ? ' · latest' : '')),
+              h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+                h('span', { style: css.note },
+                  `${take.at.toLocaleTimeString()} · ${take.seconds.toFixed(1)} s`
+                  + (take.source === 'manual' ? ' · listened' : ' · transmitted')),
+                // Labelled after the fact: the operator knows what they just
+                // switched, and typing beforehand is one more thing to forget
+                // mid-over.
+                h('input', {
+                  style: { ...css.input, maxWidth: 150 },
+                  value: take.label,
+                  placeholder: 'label (e.g. dipole)',
+                  onChange: (e) => {
+                    const v = e.target.value;
+                    setTakes((prev) => prev.map((t) =>
+                      t.at === take.at ? { ...t, label: v } : t));
+                  },
+                })),
               h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
                 take.rows.map((row) =>
                   h('button', {
@@ -373,6 +493,11 @@ function UbersdrPanel({ api }) {
                     row.peakSnr == null ? '— dB' : `${row.peakSnr.toFixed(0)} dB`,
                     playing === row.host ? ' ■' : ' ▶'))))))
       : null,
+
+    h(Comparison, {
+      takes,
+      hosts: wall.map((rx) => rx.host),
+    }),
 
     info
       ? h('div', { style: css.note },
