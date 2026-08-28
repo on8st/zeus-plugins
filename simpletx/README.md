@@ -43,15 +43,26 @@ In Zeus: **Features → install local feature**, choose the zip.
 
 ## Status
 
-**Nothing works yet.** Scaffold plus manifest; there is no entrypoint type and
-no UI module.
+**Builds, tests and packages. Never run against a radio.**
 
-It is also **not buildable against SDK 1.4.0**, and that is the real blocker
-rather than missing effort. `IRadioController` exposes `SetFrequencyAsync`,
-`SetModeAsync` and `SetMoxAsync` — one of the nine controls this panel needs,
-and none of the five meter readings. The manifest declares `minVersion 1.5.0`
-to record that dependency honestly; the host will refuse to load it until
-`Zeus.Plugins.Contracts` grows the members listed in the proposal.
+| | |
+|---|---|
+| Backend | `SimpletxPlugin`, nine routes, clean with warnings as errors |
+| Panel | `ui/simpletx.es.js` — three meters, nine controls, verdict line |
+| Tests | 31 passing: the verdict table, the limits, and SWR |
+| Package | `panel-check` renders, runs effects, clicks, unmounts |
 
-Order of work is in the proposal: contracts first, in station-engine, then the
-backend routes here, then the UI module.
+**It needs SDK 1.5.0 and no released engine has it.** The contract additions
+this depends on — seven `IRadioController` members, `DrivePercent`,
+`MicGainDb`, `ITxTelemetry` and `TxFrame` — live on a `feat/tx-contracts`
+branch of a station-engine clone, not in any release. Against 1.4.0 the host
+refuses to load this, which is deliberate: the manifest records the dependency
+instead of half-working.
+
+Nothing in the engine implements those members yet either, so even on a build
+that loads it the controller calls are no-ops and no telemetry arrives. The
+panel is honest about that — with no telemetry the verdict is `Unknown` rather
+than a guess, and the meters read `—`.
+
+So: everything above the contract boundary is exercised; everything below it
+is untested against real hardware.
