@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "be.on8st.zeus.plugins.simpletx",
+  "name": "Simple TX",
+  "version": "0.1.0",
+  "author": "on8st",
+  "description": "A basic transmit panel: PTT, tune and drive, the audio source and gain feeding them, and meters that show whether any of it reached the air. Groups the settings that can silently stop you transmitting and leaves the tuning controls where they are. It is not a replacement for the TX audio suite and owns no DSP.",
+  "homepage": "https://github.com/on8st/zeus-plugins",
+  "license": "GPL-2.0-or-later",
+  "sdk": {
+    "abi": 1,
+    "minVersion": "1.5.0"
+  },
+  "entrypoint": {
+    "assembly": "Zeus.Plugin.Simpletx.dll",
+    "type": "Zeus.Plugin.Simpletx.SimpletxPlugin"
+  },
+  "capabilities": [
+    "ControlRadio",
+    "ReadRadioState",
+    "PersistSettings"
+  ],
+  "permissions": {
+    "network": false,
+    "fileSystemRead": false,
+    "fileSystemWrite": false
+  },
+  "ui": {
+    "modules": [
+      "ui/simpletx.es.js"
+    ],
+    "panels": [
+      {
+        "id": "simpletx.main",
+        "title": "Simple TX",
+        "icon": "Radio",
+        "slot": "workspace.tools",
+        "category": "tools"
+      }
+    ]
+  }
+}

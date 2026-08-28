@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Zeus.Plugin.Simpletx/Zeus.Plugin.Simpletx.csproj" />
+  <Project Path="tests/Zeus.Plugin.Simpletx.Tests/Zeus.Plugin.Simpletx.Tests.csproj" />
+</Solution>

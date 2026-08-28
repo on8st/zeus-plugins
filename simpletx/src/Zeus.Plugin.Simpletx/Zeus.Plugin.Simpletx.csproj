@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <!-- A plugin is loaded through AssemblyDependencyResolver, which reads the
+         .deps.json and looks for assemblies beside it. A class library does not
+         copy its NuGet dependencies to the output by default, so without this
+         they are simply absent at load time. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The host resolves the contracts from the default load context, so the
+         plugin must NOT ship its own copy: Private=false. -->
+    <ProjectReference Include="$(ZeusContractsProject)" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- plugin.json, not manifest.json. -->
+    <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ui/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

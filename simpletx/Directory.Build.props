@@ -1,0 +1,13 @@
+<Project>
+
+  <!--
+    Where the Zeus station-engine source sits, for the Zeus.Plugins.Contracts
+    project reference. Defaults to a sibling checkout; override with
+    -p:ZeusEngineRoot=/path/to/station-engine
+  -->
+  <PropertyGroup>
+    <ZeusEngineRoot Condition="'$(ZeusEngineRoot)' == ''">$(MSBuildThisFileDirectory)../../station-engine</ZeusEngineRoot>
+    <ZeusContractsProject>$(ZeusEngineRoot)/Zeus.Plugins.Contracts/Zeus.Plugins.Contracts.csproj</ZeusContractsProject>
+  </PropertyGroup>
+
+</Project>

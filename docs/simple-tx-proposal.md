@@ -1,6 +1,6 @@
-# Proposal: a TX Panel plugin
+# Proposal: a Simple TX plugin
 
-`be.on8st.zeus.plugins.txpanel` — slug `txpanel`, GPL-2.0-or-later.
+`be.on8st.zeus.plugins.simpletx` — slug `simpletx`, GPL-2.0-or-later.
 
 Checked against station-engine **v2.0.9** (`db764e1`) and zeus-plugins `373fa03`
 on `main`. Where this disagrees with the code, the code is right.
@@ -175,10 +175,10 @@ rate — reads healthy in both cases. No plugin can see it today.
 
 ```sh
 cd ~/Repos/on8st/zeus-plugins
-./tools/new-plugin.sh txpanel "TX Panel"
+./tools/new-plugin.sh simpletx "Simple TX"
 ```
 
-The slug must match `^[a-z][a-z0-9]*$` — `txpanel`, not `tx-panel`, or the
+The slug must match `^[a-z][a-z0-9]*$` — `simpletx`, not `simple-tx`, or the
 generated id is rejected.
 
 ### plugin.json
@@ -186,8 +186,8 @@ generated id is rejected.
 ```json
 {
   "schemaVersion": 1,
-  "id": "be.on8st.zeus.plugins.txpanel",
-  "name": "TX Panel",
+  "id": "be.on8st.zeus.plugins.simpletx",
+  "name": "Simple TX",
   "version": "0.1.0",
   "author": "on8st",
   "description": "A basic transmit panel: PTT, tune and drive, the audio source and gain feeding them, and meters that show whether any of it reached the air.",
@@ -195,18 +195,18 @@ generated id is rejected.
   "license": "GPL-2.0-or-later",
   "sdk": { "abi": 1, "minVersion": "1.5.0" },
   "entrypoint": {
-    "assembly": "Zeus.Plugin.Txpanel.dll",
-    "type": "Zeus.Plugin.Txpanel.TxPanelPlugin"
+    "assembly": "Zeus.Plugin.Simpletx.dll",
+    "type": "Zeus.Plugin.Simpletx.SimpletxPlugin"
   },
   "capabilities": [ "ControlRadio", "ReadRadioState", "PersistSettings" ],
   "permissions": {
     "network": false, "fileSystemRead": false, "fileSystemWrite": false
   },
   "ui": {
-    "modules": [ "ui/txpanel.es.js" ],
+    "modules": [ "ui/simpletx.es.js" ],
     "panels": [{
-      "id": "txpanel.main",
-      "title": "TX Panel",
+      "id": "simpletx.main",
+      "title": "Simple TX",
       "icon": "Radio",
       "slot": "workspace.tools",
       "category": "tools"
@@ -263,7 +263,7 @@ directional coupler at all.
 |---|---|---|
 | 1 | station-engine | Add the controller members, reader properties and `ITxTelemetry` as default interface members. No ABI bump; ship as SDK 1.5.0. |
 | 2 | station-engine | Implement `TxFrame` from values already logged in `p1.tx.rate` and `wdsp.rx.meter`, plus HL2 port-1025 telemetry. |
-| 3 | zeus-plugins | `new-plugin.sh txpanel "TX Panel"`, then the backend routes. |
+| 3 | zeus-plugins | `new-plugin.sh simpletx "Simple TX"`, then the backend routes. |
 | 4 | zeus-plugins | UI module: three LED bar meters, nine controls, the verdict line. |
 | 5 | zeus-plugins | Add the row to the repo README table, next to Wavelog. |
 
