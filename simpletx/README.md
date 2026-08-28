@@ -35,11 +35,35 @@ Proposal, including the contract additions this needs:
 
 ## Install
 
+Two packages, because no released engine carries the contracts the real one
+needs.
+
 ```sh
-./tools/package.sh            # prints the .zip and its sha256
+./tools/package.sh            # the real plugin — needs SDK 1.5.0
+./tools/package-sdk14.sh      # degraded, loads on a released engine today
 ```
 
 In Zeus: **Features → install local feature**, choose the zip.
+
+| | `package.sh` | `package-sdk14.sh` |
+|---|---|---|
+| Needs | SDK 1.5.0 | SDK 1.4.0 |
+| Bridge | `TxBridge.Full.cs` | `TxBridge.Legacy.cs` |
+| Controls that reach the radio | all nine | MOX only |
+| Meters | live | blank |
+| Verdict | real | always `Unknown` |
+
+The 1.4.0 build is for checking that the panel, the routes, the manifest and
+the capability grant all wire up. It cannot make the radio transmit.
+
+**Editing `minVersion` by hand does not substitute for it.** The host binds
+contracts from its own load context, so a plugin compiled against 1.5.0 and
+dropped onto a 1.4.0 host does not degrade — `ITxTelemetry` and `TxFrame` are
+absent and it fails to bind. `package-sdk14.sh` compiles against a real 1.4.0
+checkout instead, so the compiler proves the legacy bridge names nothing the
+old contracts lack, and it rewrites `minVersion` in the build output only. The
+manifest in `src/` keeps saying 1.5.0, because that is the truth about the
+plugin.
 
 ## Status
 

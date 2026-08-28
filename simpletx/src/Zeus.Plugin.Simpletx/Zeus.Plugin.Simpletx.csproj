@@ -24,4 +24,12 @@
     <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="ui/**/*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- One of the two bridges, never both. ZeusSdk14=true builds against a
+       host whose contracts predate the transmit path; see tools/package-sdk14.sh. -->
+  <ItemGroup Condition="'$(ZeusSdk14)' == 'true'">
+    <Compile Remove="TxBridge.Full.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ZeusSdk14)' != 'true'">
+    <Compile Remove="TxBridge.Legacy.cs" />
+  </ItemGroup>
 </Project>
