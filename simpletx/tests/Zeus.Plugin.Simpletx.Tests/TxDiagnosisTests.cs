@@ -63,13 +63,31 @@ public class TxDiagnosisTests
         Assert.Equal(TxVerdict.NoDrive, TxDiagnosis.Diagnose(false, true, 0, 0));
     }
 
-    /// <summary>A host on the old contracts publishes no telemetry. Saying
-    /// "transmitting" there would be a guess, so the panel says it cannot
-    /// tell.</summary>
+    /// <summary>No engine exposes the wire peak over HTTP, so this is the
+    /// normal case in production. Saying "transmitting" would be a guess.</summary>
     [Fact]
     public void Keyed_without_telemetry_is_unknown_not_a_guess()
     {
         Assert.Equal(TxVerdict.Unknown, TxDiagnosis.Diagnose(true, false, 36, null));
+    }
+
+    /// <summary>
+    /// The diagnosis that had to survive losing telemetry. Drive at zero cannot
+    /// transmit whatever else is or is not measurable, so this stays a definite
+    /// answer rather than degrading to Unknown with the rest.
+    /// </summary>
+    [Fact]
+    public void Zero_drive_is_still_definite_without_any_telemetry()
+    {
+        Assert.Equal(TxVerdict.NoDrive, TxDiagnosis.Diagnose(true, false, 0, null));
+    }
+
+    /// <summary>Tune has its own percentage, so a zero transmit drive must not
+    /// be reported as a fault while tuning.</summary>
+    [Fact]
+    public void Tuning_is_not_condemned_by_a_zero_transmit_drive()
+    {
+        Assert.NotEqual(TxVerdict.NoDrive, TxDiagnosis.Diagnose(false, true, 0, null));
     }
 
     [Theory]

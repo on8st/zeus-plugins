@@ -121,26 +121,65 @@ computed and logged; it simply never reaches a plugin.
    `/api/tx-audio-suite/preview` suggests a path exists.
 5. Peak-hold behaviour on the power meter — worth having, or noise?
 
-## 4. Rejected: UI calling the REST API directly
+## 4. How the plugin reaches the radio, and what it costs
 
-A plugin UI module runs inside the Zeus app origin, so this would work today
-with no contract change at all:
+### The contracts are a dead end
 
-```js
-await fetch('/api/tx/drive', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ percent: 20 }),
-});
-```
+`IPluginContext.Radio` and `RadioController` are declared and never provided.
+`PluginManager` resolves them from DI —
+`_services.GetService<IRadioStateReader>()` — and nothing in the engine source
+registers either. A runtime probe settled it: with the engine reporting
+`status: Connected`, `connectedProtocol: P1`, `endpoint: 192.168.8.2:1024`,
+this plugin's context still saw both as null. ubersdr's `EngineRadio` carries
+the same finding in a comment, reached independently.
 
-**Rejected.** It routes around the capability model entirely. A plugin could key
-the transmitter without ever declaring `ControlRadio`, and the user would never
-be asked to grant it. The manifest's whole promise is that the host knows what a
-plugin can do before it runs; a plugin that can transmit while claiming no
-capabilities makes that promise false.
+So §3 of the proposal, and the contract additions on the `feat/tx-contracts`
+branch, are necessary but **not sufficient**. Adding members to an interface
+nobody hands out changes nothing. Registering the services is the larger and
+more important ask.
 
-Recorded here so it is not rediscovered later as a clever idea.
+### What it does instead
+
+Calls the engine's own HTTP API from inside the engine process, taking the
+port from the engine's command line, exactly as ubersdr does. Every route and
+payload was read from `TxControlEndpoints.cs`, `TxTimingAndTestEndpoints.cs`
+and `FilterEndpoints.cs`:
+
+| Control | Route | Payload |
+|---|---|---|
+| PTT | `POST /api/tx/mox` | `MoxSetRequest(bool On)` |
+| Tune | `POST /api/tx/tun` | `TunSetRequest(bool On)` |
+| Tune drive | `POST /api/tx/tune-drive` | `TuneDriveSetRequest(int Percent)` |
+| Drive | `POST /api/tx/drive` | `DriveSetRequest(int Percent)` |
+| Max drive | `POST /api/tx/drive-max` | `DriveMaxSetRequest(int Percent)` |
+| Mic gain | `POST /api/mic-gain` | `MicGainSetRequest(int Db)` |
+| Leveler | `POST /api/tx/leveler-max-gain` | `LevelerMaxGainSetRequest(double Gain)` |
+| TX filter | `POST /api/tx-filter` | `TxFilterSetRequest(int LowHz, int HighHz)` |
+| Timeout | `POST /api/tx/timeout` | `TxTimeoutSetRequest(int Seconds)` |
+| Everything read | `GET /api/state` | — |
+
+`/api/tx/timeout` exists, which closes open question 3: the timeout belongs to
+the engine, not to plugin settings. `txAudioSource` is readable from
+`/api/state` and has **no setter route**, so the panel shows it read-only.
+
+### What this costs, stated plainly
+
+An earlier version of this document rejected reaching the REST API, on the
+grounds that it routes around the capability model. That objection was aimed
+at the *panel* fetching cross-origin, and it still holds there — the panel is
+served from a different origin and cannot reach the engine anyway. But the
+objection applies to the backend doing it too, and it is not answered by the
+fact that ubersdr does it first.
+
+The cost is real: a plugin that calls the engine's API can key the
+transmitter whether or not it declared `ControlRadio`, and the operator is
+never asked to grant anything. The manifest here declares only
+`NetworkAccess`, because declaring `ControlRadio` would claim a grant that
+does nothing.
+
+This is a weakness in the platform, not a trick worth being pleased about.
+The fix is upstream: register the radio services so the capability grant has
+something to gate.
 
 ## 5. Meters
 
@@ -155,9 +194,18 @@ the number you need on transmit never matter at the same moment.
 | Mic | always | −48 – 0 dBFS | to −12 / −12..−3 / −3 up |
 | SWR | TX | 1.0 – 4.0+ | to 1.5 / 1.5..2.5 / 2.5 up |
 
-The SWR bar dims on receive: SWR without forward power is meaningless, and a
-bar showing *something* would be a lie. The mic bar does **not** dim — see open
-question 4.
+**None of these read anything today.** No engine route carries a meter: the
+wire peak exists only inside `Protocol1Client`'s 1 Hz `p1.tx.rate` log line,
+and forward power, SWR, mic level and the S-meter reach the product over the
+binary `/ws` StreamingHub. The bars are therefore drawn dark and read `—`,
+with a caption saying why — a zero-length green bar would claim "measured, and
+it is nothing", which is false on a healthy radio.
+
+Reading the `/ws` hub against its `WireContract` is the way to bring them
+back, and is not done.
+
+The scales above are the intended mapping, kept here because the code that
+implemented them was removed rather than left dead.
 
 Red on SWR is set at 2.5 because that is where most PAs fold back, and the HL2
 has no protection worth relying on.

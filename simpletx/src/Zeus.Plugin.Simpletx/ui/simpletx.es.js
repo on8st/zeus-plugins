@@ -22,16 +22,10 @@ const SEG_MAIN = 28;
 const SEG_MIC = 20;
 const SEG_SWR = 20;
 
-// S1 is -121 dBm and every S-unit is 6 dB, so S9 lands on -73 dBm. The bar
-// runs S1 to S9+60 because that is what the scale under it claims.
-const S1_DBM = -121;
-const S_TOP_DBM = -13;
-
-const litFromRange = (value, lo, hi, segments) => {
-  if (value === null || value === undefined || Number.isNaN(value)) return 0;
-  const t = (value - lo) / (hi - lo);
-  return Math.max(0, Math.min(segments, Math.round(t * segments)));
-};
+// The dBm-to-segments and watts-to-segments mappings lived here until the
+// engine turned out to expose no metering over HTTP. They are in the history
+// rather than kept as dead code; the scales they served are in
+// docs/design/source/design.md §5.
 
 const COLOURS = {
   green: '#2f9463',
@@ -192,26 +186,17 @@ function SimpleTxPanel({ api }) {
       'Simple TX: no radio. Connect a radio and this panel comes up with it.');
   }
 
-  const t = state.telemetry;
+  const metering = state.metering === true;
   const keyed = state.keyed || state.tuning;
   const drivePct = drive === null ? state.drivePercent : drive;
   const micDb = micGain === null ? state.micGainDb : micGain;
 
-  // Top meter does double duty: signal on receive, forward power on transmit.
-  const mainLit = keyed
-    ? litFromRange(t ? t.forwardWatts : 0, 0, 10, SEG_MAIN)
-    : litFromRange(t ? t.signalDbm : null, S1_DBM, S_TOP_DBM, SEG_MAIN);
-  const mainRead = keyed
-    ? `${(t ? t.forwardWatts : 0).toFixed(1)} W`
-    : t ? sLabel(t.signalDbm) : '—';
-
-  const micLit = t && t.micPeakDbfs !== null && t.micPeakDbfs !== undefined
-    ? litFromRange(t.micPeakDbfs, -48, 0, SEG_MIC) : 0;
-  const micRead = t && t.micPeakDbfs !== null && t.micPeakDbfs !== undefined
-    ? `${t.micPeakDbfs.toFixed(0)} dB` : '—';
-
-  const swr = t && t.swr !== null && t.swr !== undefined ? t.swr : null;
-  const swrLit = swr === null ? 0 : Math.max(1, litFromRange(swr, 1, 4, SEG_SWR));
+  // No engine exposes the wire peak, forward power, mic level or the S-meter
+  // over HTTP, so the bars are drawn dark and read "—". Showing a zero-length
+  // green bar would say "measured, and it is nothing", which is a different
+  // and false claim. The caption under them says which it is.
+  const mainLit = 0, micLit = 0, swrLit = 0;
+  const mainRead = '—', micRead = '—', swrRead = '—';
 
   const bad = state.verdict === 'NoDrive' || state.verdict === 'NoAudio';
 
@@ -227,6 +212,7 @@ function SimpleTxPanel({ api }) {
         amberAt: keyed ? Math.round(SEG_MAIN * 0.7) : 18,
         redAt: keyed ? Math.round(SEG_MAIN * 0.9) : 23,
         reading: mainRead,
+        dim: !metering,
         scale: keyed ? ['0', '2', '4', '6', '8', '10 W']
                      : ['S1', '3', '5', '7', '9', '+20', '+40', '+60'],
       }),
@@ -237,6 +223,7 @@ function SimpleTxPanel({ api }) {
         amberAt: 15,
         redAt: 19,
         reading: micRead,
+        dim: !metering,
         scale: ['-40', '-30', '-20', '-12', '-6', '0 dB'],
       }),
       h(Meter, {
@@ -245,10 +232,16 @@ function SimpleTxPanel({ api }) {
         segments: SEG_SWR,
         amberAt: Math.round(SEG_SWR * (1.5 - 1) / 3),
         redAt: Math.round(SEG_SWR * (2.5 - 1) / 3),
-        reading: swr === null ? '—' : swr.toFixed(1),
+        reading: swrRead,
         scale: ['1.0', '1.5', '2.0', '3.0', '4+'],
-        dim: swr === null,
-      })),
+        dim: true,
+      }),
+      metering ? null : h('div', {
+        style: {
+          fontSize: 12, color: 'var(--zeus-faint, #6d7885)',
+          marginLeft: 66, marginTop: 2,
+        },
+      }, 'Metering is not exposed by the engine API — controls below are live.')),
 
     // controls
     h('div', {
@@ -314,19 +307,19 @@ function SimpleTxPanel({ api }) {
           })),
         h('div', null,
           h('span', { style: labelStyle }, 'TX filter'),
-          h('span', { style: valueStyle }, '0 – 2850 Hz'))),
+          h('span', { style: valueStyle },
+            `${state.txFilterLowHz} – ${state.txFilterHighHz} Hz`))),
 
       h(Group, { title: 'Guard' },
         h('div', { style: { marginBottom: 14 } },
           h('span', { style: labelStyle }, 'Max drive'),
-          h('span', { style: valueStyle }, '100%')),
+          h('span', { style: valueStyle }, `${state.driveMaxPercent}%`)),
         h('div', { style: { marginBottom: 14 } },
           h('span', { style: labelStyle }, 'TX timeout'),
           h('span', { style: valueStyle }, `${state.timeoutSeconds} s`)),
         h('div', null,
-          h('span', { style: labelStyle }, 'PA'),
-          h('span', { style: valueStyle },
-            t ? `${t.paTempC.toFixed(1)} °C` : '—')))),
+          h('span', { style: labelStyle }, 'Leveler max gain'),
+          h('span', { style: valueStyle }, `${state.levelerMaxGainDb} dB`)))),
 
     // verdict
     h('div', {
@@ -344,19 +337,12 @@ function SimpleTxPanel({ api }) {
         },
       }, 'Status'),
       h('span', null, state.message),
-      t ? h('span', {
+      metering ? null : h('span', {
         style: {
           fontFamily: 'ui-monospace, monospace', fontSize: 12,
           color: 'var(--zeus-faint, #6d7885)', marginLeft: 8,
         },
-      }, `wire ${t.wirePeak}/32767`) : null));
-}
-
-function sLabel(dbm) {
-  if (dbm === null || dbm === undefined) return '—';
-  const overS1 = dbm - S1_DBM;
-  if (dbm <= -73) return `S${Math.max(1, Math.min(9, Math.round(overS1 / 6) + 1))}`;
-  return `S9+${Math.round((dbm + 73) / 10) * 10}`;
+      }, 'no wire telemetry')));
 }
 
 export default function register(api) {

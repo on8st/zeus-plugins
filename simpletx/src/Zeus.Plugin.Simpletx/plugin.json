@@ -4,24 +4,22 @@
   "name": "Simple TX",
   "version": "0.1.0",
   "author": "on8st",
-  "description": "A basic transmit panel: PTT, tune and drive, the audio source and gain feeding them, and meters that show whether any of it reached the air. Groups the settings that can silently stop you transmitting and leaves the tuning controls where they are. It is not a replacement for the TX audio suite and owns no DSP.",
+  "description": "A basic transmit panel: PTT, tune and drive, the audio source and gain feeding them, and the one diagnosis that says whether a keyed radio can transmit at all. Groups the settings that can silently stop you transmitting and leaves the tuning controls where they are. Talks to the engine's own API, because the plugin contracts declare a radio and never provide one. Owns no DSP.",
   "homepage": "https://github.com/on8st/zeus-plugins",
   "license": "GPL-2.0-or-later",
   "sdk": {
     "abi": 1,
-    "minVersion": "1.5.0"
+    "minVersion": "1.4.0"
   },
   "entrypoint": {
     "assembly": "Zeus.Plugin.Simpletx.dll",
     "type": "Zeus.Plugin.Simpletx.SimpletxPlugin"
   },
   "capabilities": [
-    "ControlRadio",
-    "ReadRadioState",
-    "PersistSettings"
+    "NetworkAccess"
   ],
   "permissions": {
-    "network": false,
+    "network": true,
     "fileSystemRead": false,
     "fileSystemWrite": false
   },

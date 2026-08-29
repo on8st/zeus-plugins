@@ -25,68 +25,66 @@ Proposal, including the contract additions this needs:
 
 ## What you need
 
-- Zeus station-engine with **SDK 1.5.0 or later**. This plugin does not load on
-  1.4.0 — see Status.
-- A radio whose transmit path the engine can drive. Developed against a
-  Hermes-Lite 2 (gateware 74.2, four receivers).
-- For the SWR meter and forward power: an **N2ADR filter/IO board**. The HL2
-  mainboard has no directional coupler, so without it those two readings have
-  no source and the panel dims them.
+- Zeus station-engine **2.x** — any released build. It talks to the engine's
+  own HTTP API, so no SDK change is needed.
+- A radio connected in Zeus. The panel reports "no radio" otherwise.
 
 ## Install
 
-Two packages, because no released engine carries the contracts the real one
-needs.
-
 ```sh
-./tools/package.sh            # the real plugin — needs SDK 1.5.0
-./tools/package-sdk14.sh      # degraded, loads on a released engine today
+./tools/package.sh            # prints the .zip and its sha256
 ```
 
 In Zeus: **Features → install local feature**, choose the zip.
 
-| | `package.sh` | `package-sdk14.sh` |
-|---|---|---|
-| Needs | SDK 1.5.0 | SDK 1.4.0 |
-| Bridge | `TxBridge.Full.cs` | `TxBridge.Legacy.cs` |
-| Controls that reach the radio | all nine | MOX only |
-| Meters | live | blank |
-| Verdict | real | always `Unknown` |
-
-The 1.4.0 build is for checking that the panel, the routes, the manifest and
-the capability grant all wire up. It cannot make the radio transmit.
-
-**Editing `minVersion` by hand does not substitute for it.** The host binds
-contracts from its own load context, so a plugin compiled against 1.5.0 and
-dropped onto a 1.4.0 host does not degrade — `ITxTelemetry` and `TxFrame` are
-absent and it fails to bind. `package-sdk14.sh` compiles against a real 1.4.0
-checkout instead, so the compiler proves the legacy bridge names nothing the
-old contracts lack, and it rewrites `minVersion` in the build output only. The
-manifest in `src/` keeps saying 1.5.0, because that is the truth about the
-plugin.
-
 ## Status
 
-**Builds, tests and packages. Never run against a radio.**
+**Controls work. Meters do not, and the panel says so.**
 
 | | |
 |---|---|
-| Backend | `SimpletxPlugin`, nine routes, clean with warnings as errors |
-| Panel | `ui/simpletx.es.js` — three meters, nine controls, verdict line |
-| Tests | 31 passing: the verdict table, the limits, and SWR |
+| Nine controls | live, through the engine's own API |
+| Diagnosis | drive-at-zero is caught; the rest needs metering |
+| Meters | blank, with a caption explaining why |
+| Tests | 33 passing |
 | Package | `panel-check` renders, runs effects, clicks, unmounts |
 
-**It needs SDK 1.5.0 and no released engine has it.** The contract additions
-this depends on — seven `IRadioController` members, `DrivePercent`,
-`MicGainDb`, `ITxTelemetry` and `TxFrame` — live on a `feat/tx-contracts`
-branch of a station-engine clone, not in any release. Against 1.4.0 the host
-refuses to load this, which is deliberate: the manifest records the dependency
-instead of half-working.
+### Why it does not use the plugin contracts
 
-Nothing in the engine implements those members yet either, so even on a build
-that loads it the controller calls are no-ops and no telemetry arrives. The
-panel is honest about that — with no telemetry the verdict is `Unknown` rather
-than a guess, and the meters read `—`.
+`IPluginContext.Radio` and `RadioController` are declared by
+`Zeus.Plugins.Contracts` and **never provided**. `PluginManager` resolves them
+with `_services.GetService<IRadioStateReader>()` and nothing registers one; a
+runtime probe against a live engine with a radio connected returned null for
+both. ubersdr found the same and reached the same answer, so this follows it:
+the plugin calls the engine's HTTP API from inside the engine process, taking
+the port off the engine's own command line.
 
-So: everything above the contract boundary is exercised; everything below it
-is untested against real hardware.
+Every route and payload was read from the engine source — `TxControlEndpoints`,
+`TxTimingAndTestEndpoints`, `FilterEndpoints` — rather than guessed.
+
+**This does weaken the capability model, and that is worth saying plainly.**
+A plugin reaching the engine's API can key the transmitter whether or not it
+declared `ControlRadio`, and the operator is never asked. The manifest here
+declares only `NetworkAccess`, because declaring `ControlRadio` would imply a
+grant that does nothing. The honest fix is upstream: register the radio
+services, so the contracts mean what they say.
+
+### Why the meters are blank
+
+No engine route carries them. The wire peak exists only inside
+`Protocol1Client`'s 1 Hz `p1.tx.rate` log line, and forward power, SWR, mic
+level and the S-meter reach the product over the binary `/ws` StreamingHub.
+Reading that hub is a real piece of work and has not been done.
+
+The bars are drawn dark and read `—` rather than showing a zero-length green
+bar, which would claim "measured, and it is nothing" — a different and false
+statement on a healthy radio.
+
+One diagnosis survives without any metering, and it is the one that prompted
+the plugin: **drive at zero while keyed cannot transmit**, and `/api/state`
+reports `drivePct`.
+
+### Not verified
+
+Never run against a radio through this path. The engine was closed before the
+HTTP bridge could be exercised end to end.

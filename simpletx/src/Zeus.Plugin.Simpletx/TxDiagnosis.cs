@@ -50,6 +50,14 @@ public static class TxDiagnosis
     public static TxVerdict Diagnose(bool keyed, bool tuning, int drivePercent, int? wirePeak)
     {
         if (!keyed && !tuning) return TxVerdict.Receiving;
+
+        // Drive at zero cannot transmit, whatever the telemetry says or fails
+        // to say. This is the one diagnosis that survives with no wire peak,
+        // and it is the failure that prompted the plugin — so it is checked
+        // before anything is given up as Unknown. Tune has its own percentage
+        // and is not gated by this one.
+        if (!tuning && drivePercent <= 0) return TxVerdict.NoDrive;
+
         if (wirePeak is not { } peak) return TxVerdict.Unknown;
 
         if (peak > 0) return tuning ? TxVerdict.Tuning : TxVerdict.Transmitting;
