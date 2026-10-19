@@ -27,8 +27,16 @@ let dirty = false;
 let everChanged = false;
 const effects = [];
 
+// Every element rendered in the last pass, so the handlers on them can be
+// exercised. Rendering only the initial state let a panel ship that threw the
+// moment it was switched on: the branch that runs while listening but before
+// anything is confirmed referenced two variables that no longer existed, and
+// nothing here had ever evaluated it.
+let painted = [];
+
 const React = {
   createElement(type, props, ...children) {
+    if (props && typeof props === 'object') painted.push(props);
     // Render function components eagerly: a child that throws must fail here.
     if (typeof type === 'function') {
       const before = cursor;
@@ -112,7 +120,7 @@ if (typeof mod.default !== 'function') {
 }
 
 // ---- exercise it -----------------------------------------------------------
-let registered = null;
+const registered = [];
 const cleanups = [];
 // Shapes taken from real responses, so the loaded state the panel reaches is
 // the one it will actually reach.
@@ -139,7 +147,10 @@ const FIXTURES = {
 };
 
 const api = {
-  registerPanel: (p) => { registered = p; },
+  // Every panel a module registers, not just the last one. A plugin that
+  // registers two and only has one checked is worse than not checking: the
+  // report says "ok" while half the code has never been run.
+  registerPanel: (p) => { registered.push(p); },
   callBackend: async (method, path2) => {
     const key = Object.keys(FIXTURES).find((k) => String(path2).startsWith(k));
     return { ok: true, json: async () => (key ? FIXTURES[key] : {}) };
@@ -148,20 +159,23 @@ const api = {
 
 mod.default(api);
 
-if (!registered?.id || typeof registered.component !== 'function') {
-  console.error('FAIL  register() did not register a panel with an id and a component');
+if (!registered.length || registered.some((p) => !p?.id || typeof p.component !== 'function')) {
+  console.error('FAIL  register() did not register panels with an id and a component');
   process.exit(1);
 }
 
 // First render. A TDZ error, a bad hook order, or a typo in JSX-free
 // createElement all surface right here.
+for (const panel of registered) {
 try {
+  hooks.length = 0; effects.length = 0; cleanups.length = 0;
   // Render, run effects, and keep rendering while state is still settling —
   // which is how the panel reaches its loaded state rather than its empty one.
   for (let pass = 0; pass < 12; pass++) {
     dirty = false;
     cursor = 0;
-    registered.component();
+    painted = [];
+    panel.component();
 
     const queued = effects.splice(0);
     for (const fn of queued) {
@@ -173,21 +187,44 @@ try {
     if (!dirty && queued.length === 0 && pass > 1) break;
   }
 
+  // Now press things. A panel that renders its idle state and throws the moment
+  // it is switched on has not been checked at all — and that is exactly what
+  // shipped once, twice.
+  const handlers = painted.filter((p) => typeof p.onClick === 'function');
+  for (const p of handlers) {
+    try { p.onClick({ stopPropagation() {}, target: { value: '' } }); }
+    catch (e) {
+      if (e && e.name === 'ReferenceError') throw e;   // a real bug, not a stub gap
+    }
+  }
+  // Re-render after the presses, which is where a broken branch surfaces.
+  for (let pass = 0; pass < 6; pass++) {
+    dirty = false; cursor = 0; painted = [];
+    panel.component();
+    const queued = effects.splice(0);
+    for (const fn of queued) {
+      const cleanup = fn();
+      if (typeof cleanup === 'function') cleanups.push(cleanup);
+    }
+    await new Promise((r) => setImmediate(r));
+    if (!dirty && queued.length === 0 && pass > 1) break;
+  }
+
   // And unmount, which must not throw either.
   for (const c of cleanups.splice(0)) c();
+
+  console.log(`ok    panel '${panel.id}' rendered, effects ran, clicked, unmounted`
+    + (everChanged ? ' \u2014 reached a loaded state'
+                   : ' \u2014 WARNING: never left the empty state'));
+  everChanged = false;
 } catch (e) {
   console.error(`FAIL  ${e?.name ?? 'Error'}: ${clean(e?.message ?? e)}`);
   if (e?.stack) console.error(clean(e.stack).split('\n').slice(1, 4).join('\n'));
   await unlink(tmp).catch(() => {});
   process.exit(1);
 }
+}
 await unlink(tmp).catch(() => {});
 
-// Report what state it actually reached, so a check that quietly renders the
-// empty view forever cannot look like a pass.
-// "Left the empty state" means some piece of state actually changed — not that
-// an array filled up, which was true of one panel and false of another that was
-// working perfectly.
-const loaded = everChanged;
-console.log(`ok    panel '${registered.id}' rendered, effects ran, unmounted`
-  + (loaded ? ' — reached a loaded state' : ' — WARNING: never left the empty state'));
+// Reported per panel above, so a module that registers two and only exercises
+// one cannot report "ok" for the half that never ran.

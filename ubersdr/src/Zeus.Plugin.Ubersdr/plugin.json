@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "be.on8st.zeus.plugins.ubersdr",
-  "name": "UberSDR Monitor",
+  "id": "be.on8st.zeus.plugins.ka9q.ubersdr.remoteears",
+  "name": "Remote Ears (powered by ka9q-ubersdr)",
   "version": "0.1.0",
   "author": "on8st",
-  "description": "Remote UberSDR receivers, two ways. QSO Assist puts your own radio in the left ear and whichever remote station copies the frequency best in the right, choosing and re-choosing on its own. The map shows where you are being heard while you transmit, with a recording from each receiver. Audio never enters the Zeus DSP chain.",
+  "description": "Diversity reception from the public ka9q-ubersdr receiver network. QSO Assist puts your own radio in the left ear and whichever remote station copies the frequency best in the right, choosing and re-choosing on its own and delaying the two into step. The map shows where you are being heard while you transmit, with a recording from each receiver. Audio never enters the Zeus DSP chain. Not affiliated with the UberSDR project or with ka9q-radio; the name follows theirs (github.com/ka9q/ka9q-radio).",
   "homepage": "https://github.com/on8st/zeus-plugins",
   "license": "GPL-2.0-or-later",
   "sdk": {
@@ -29,7 +29,7 @@
     "panels": [
       {
         "id": "ubersdr.qso",
-        "title": "QSO Assist",
+        "title": "Remote Ears",
         "icon": "Headphones",
         "slot": "workspace.tools",
         "category": "tools"

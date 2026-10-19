@@ -55,6 +55,41 @@ public sealed class EngineRadio(HttpClient http, ILogger? log = null)
     /// two engine calls twenty times a second for one boolean, so keying gets
     /// its own route and frequency is read slowly alongside it.</para>
     /// </summary>
+    /// <summary>
+    /// The engine's RX AF gain, in dB. This is what Zeus's own volume slider
+    /// drives — confirmed from the app's log, where a drag appears verbatim as
+    /// a run of api.rx.afGain lines. It is applied per output sink and does NOT
+    /// affect the WebSocket audio lane, which is what lets this plugin silence
+    /// Zeus's own playback while continuing to read the same stream.
+    /// </summary>
+    public async Task<double?> ReadAfGainAsync(CancellationToken ct)
+    {
+        try
+        {
+            var state = JsonNode.Parse(
+                await http.GetStringAsync($"{_base}/api/state", ct).ConfigureAwait(false));
+            return (double?)state?["rxAfGainDb"];
+        }
+        catch (Exception e) { log?.LogDebug(e, "af gain read failed"); return null; }
+    }
+
+    /// <summary>
+    /// Set it. Verified against a running engine: the value sticks — Zeus does
+    /// not re-assert its slider position over an external write.
+    /// </summary>
+    public async Task<bool> SetAfGainAsync(double db, CancellationToken ct)
+    {
+        try
+        {
+            using var body = new StringContent(
+                $"{{\"db\":{db.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}",
+                System.Text.Encoding.UTF8, "application/json");
+            var res = await http.PostAsync($"{_base}/api/rx/afGain", body, ct).ConfigureAwait(false);
+            return res.IsSuccessStatusCode;
+        }
+        catch (Exception e) { log?.LogDebug(e, "af gain write failed"); return false; }
+    }
+
     public async Task<bool?> ReadMoxAsync(CancellationToken ct)
     {
         try

@@ -14,6 +14,26 @@ namespace Zeus.Plugin.Ubersdr.Domain;
 /// Limits an operator can put on any preset. All optional; an unset field does
 /// not constrain.
 /// </summary>
+/// <summary>A rectangle of the world, in degrees.</summary>
+public sealed record Region(double MinLat, double MaxLat, double MinLon, double MaxLon)
+{
+    /// <summary>
+    /// The handful worth offering in a dropdown. Boxes, not borders: generous
+    /// at the edges so a receiver just outside a coastline is not lost, and
+    /// non-overlapping enough that a choice means what it says.
+    /// </summary>
+    public static Region? ByName(string? name) => (name ?? "").Trim().ToLowerInvariant() switch
+    {
+        "europe"        => new Region(34, 72, -26, 46),
+        "northamerica"  => new Region(12, 75, -170, -50),
+        "southamerica"  => new Region(-56, 14, -82, -33),
+        "asia"          => new Region(3, 78, 46, 180),
+        "africa"        => new Region(-36, 38, -19, 52),
+        "oceania"       => new Region(-50, 0, 110, 180),
+        _               => null,
+    };
+}
+
 public sealed record ReceiverConstraints
 {
     public double? MinDistanceKm { get; init; }
@@ -30,9 +50,31 @@ public sealed record ReceiverConstraints
     public int MinFreeSlots { get; init; } = 1;
     public IReadOnlyList<string> ExcludeHosts { get; init; } = [];
 
+    /// <summary>
+    /// Lat/lon box, when the operator has asked for a part of the world rather
+    /// than a distance or a bearing. Crude on purpose: a box needs no country
+    /// table to maintain and no opinion about where a border runs, and for
+    /// "show me receivers in Europe" it is exactly as good as anything more
+    /// elaborate. A receiver whose position is unknown is excluded — a box is a
+    /// claim about location, and we do not have one for it.
+    /// </summary>
+    public Region? InRegion { get; init; }
+
     public bool Allows(UberSdrInstance i)
     {
+        if (InRegion is { } box)
+        {
+            if (!i.HasPosition) return false;
+            if (i.Latitude < box.MinLat || i.Latitude > box.MaxLat) return false;
+            if (i.Longitude < box.MinLon || i.Longitude > box.MaxLon) return false;
+        }
+        return AllowsCore(i);
+    }
+
+    private bool AllowsCore(UberSdrInstance i)
+    {
         if (i.AvailableClients < Math.Max(1, MinFreeSlots)) return false;
+
         if (ExcludeHosts.Any(h => string.Equals(h, i.Host, StringComparison.OrdinalIgnoreCase)))
             return false;
 

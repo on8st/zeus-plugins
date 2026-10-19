@@ -64,11 +64,60 @@ public class DualMonoTests
     }
 
     [Fact]
-    public void The_double_audio_caveat_is_stated_in_the_panel()
+    public void Zeus_is_silenced_by_the_panel_and_always_given_back()
     {
-        // The panel owns both ears, so Zeus's own output has to be muted or the
-        // operator hears their receiver twice. That is a real setup step and it
-        // belongs on screen, not in a commit message.
-        Assert.Contains("Mute Zeus", Ui("qso-assist.js"));
+        // The panel owns both ears, so Zeus's own output has to go — it plays the
+        // same stream into both. This used to be a written instruction to the
+        // operator; the plugin now does it, which makes *restoring* it the thing
+        // that matters. A panel that silences the radio and does not put it back
+        // is indistinguishable from a broken receiver.
+        var qso = Ui("qso-assist.js");
+
+        Assert.Contains("silenceZeus", qso);
+        Assert.Contains("restoreZeus", qso);
+
+        // Restored on stop, and on unmount — closing the panel is not a stop.
+        Assert.Contains("void restoreZeus();", qso);
+        Assert.Contains("useEffect(() => () => { void restoreZeus(); }", qso);
+
+        // And the level to go back to is only captured when it is worth going
+        // back to, or a hand-lowered slider gets recorded as the operator's own.
+        Assert.Contains("cur > SILENCE_AF_DB + 5", qso);
+
+        // The local ear is restored by exactly the attenuation applied, not by
+        // an automatic gain control. An AGC makes every signal sound the same
+        // strength, which destroys the one thing an operator judges by ear.
+        // Measured from the level read a moment before the write, never from the
+        // stored restore value: those differ by however stale the stored one is,
+        // and the difference arrives as gain.
+        Assert.Contains("Math.pow(10, (cur - SILENCE_AF_DB) / 20)", qso);
+        Assert.Contains("res?.ok && Number.isFinite(cur)", qso);
+        Assert.Contains("if (a.makeup != null)", qso);
+    }
+
+    [Fact]
+    public void The_right_ear_is_receive_only_and_muted_by_default()
+    {
+        // It replaces one side of the operator's headphones, so it does not
+        // start unasked. And remote audio during transmit is your own voice
+        // arriving a second late in one ear, which wrecks fluent speech — or a
+        // howl on the air if it reaches a microphone.
+        var qso = Ui("qso-assist.js");
+
+        Assert.Contains("useState(true)", qso);                    // the right ear, muted
+        Assert.Contains("gate.mutedRight || (gate.keyed && !gate.txMonitor)", qso);
+        // Remote monitoring during transmit is opt-in and starts off.
+        Assert.Contains("const [txMonitor, setTxMonitor] = useState(false)", qso);
+    }
+
+    [Fact]
+    public void A_refused_receiver_is_not_retried()
+    {
+        // The panel once asked a deleted route for a connection 150 times, in
+        // silence. A failure is now said once and the host is dropped for the
+        // session.
+        var qso = Ui("qso-assist.js");
+        Assert.Contains("refused.current.add", qso);
+        Assert.Contains("refused.current.has", qso);
     }
 }

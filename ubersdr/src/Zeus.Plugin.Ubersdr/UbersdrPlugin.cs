@@ -50,6 +50,24 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
         public double? BearingTo { get; set; }
         public int MinFreeSlots { get; set; } = 1;
         public List<string> ExcludeHosts { get; set; } = [];
+
+        /// <summary>
+        /// Where to put Zeus's own playback volume back when the panel stops.
+        /// Captured the first time the panel runs while the slider is still up,
+        /// so that turning the feature off does not leave a radio that appears
+        /// dead at the level the panel silenced it to.
+        /// </summary>
+        public double? RestoreAfGainDb { get; set; }
+
+        /// <summary>Region name for the selection dropdown; see Region.ByName.</summary>
+        public string Region { get; set; } = "";
+
+        /// <summary>
+        /// Listening level for the panel's own output, 0..1. The panel silences
+        /// Zeus while it runs, so this is the operator's volume control for the
+        /// duration — without it he has none.
+        /// </summary>
+        public double? Volume { get; set; }
     }
 
     private HttpClient? _http;
@@ -123,7 +141,7 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
         endpoints.MapGet("receivers", async (
             int? count, string? preset,
             double? minKm, double? maxKm, double? bearingFrom, double? bearingTo,
-            int? minFree, string? exclude,
+            int? minFree, string? exclude, string? region,
             CancellationToken ct) =>
         {
             var limits = new ReceiverConstraints
@@ -133,6 +151,7 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
                 BearingFrom = bearingFrom,
                 BearingTo = bearingTo,
                 MinFreeSlots = minFree ?? 1,
+                InRegion = Region.ByName(region),
                 ExcludeHosts = string.IsNullOrWhiteSpace(exclude)
                     ? []
                     : exclude.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
@@ -188,8 +207,81 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
             });
         });
 
+        // Admission control, done here rather than in the panel.
+        //
+        // Not because the panel could not: the instances reflect the requesting
+        // origin in Access-Control-Allow-Origin and would allow it. It lives
+        // here so the courtesy rules are in one place — one directory fetch
+        // shared by both panels, and a refusal honoured rather than retried in a
+        // render loop. The session id is a client-generated UUID and the
+        // instance ties it to the requesting IP, which is this machine either
+        // way.
+        endpoints.MapPost("connect", async (ConnectRequest req, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Host))
+                return Results.BadRequest(new { error = "host is required" });
+
+            var all = await _directory!.GetAsync(ct).ConfigureAwait(false);
+            var instance = all.FirstOrDefault(i =>
+                string.Equals(i.Host, req.Host, StringComparison.OrdinalIgnoreCase));
+            if (instance is null)
+                return Results.BadRequest(new { error = $"unknown instance '{req.Host}'" });
+            if (!instance.CanMeter)
+                return Results.BadRequest(new
+                {
+                    error = instance.IsOnline
+                        ? "that receiver has no antenna connected, so it cannot report a signal level"
+                        : "that receiver is offline",
+                });
+
+            var session = Guid.NewGuid().ToString();
+            try
+            {
+                using var reply = await _http!.PostAsJsonAsync(
+                    $"{instance.BaseUrl}/connection", new { user_session_id = session }, ct)
+                    .ConfigureAwait(false);
+                var body = await reply.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+                if (!reply.IsSuccessStatusCode)
+                {
+                    // A refusal is the instance saying it is full or unwilling.
+                    // Honour it; do not retry.
+                    _log?.LogInformation("ubersdr: {Host} refused a connection ({Status})",
+                        instance.Host, (int)reply.StatusCode);
+                    return Results.Json(new { error = "the receiver refused the connection", detail = Trim(body) },
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+
+                return Results.Ok(new
+                {
+                    sessionId = session,
+                    wsBase = instance.WebSocketBase,
+                    // Version 2 is the only one that streams audio: version 3
+                    // connects, sends a status message, and then nothing.
+                    version = 2,
+                    admission = Trim(body),
+                });
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return Results.Json(new { error = "could not reach the receiver", detail = ex.Message },
+                    statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+        });
+
         endpoints.MapGet("config", async (CancellationToken ct) =>
             Results.Ok(await LoadConfigAsync(ct).ConfigureAwait(false)));
+
+        // Zeus's own playback volume. The panel silences it while it owns the
+        // audio and puts it back when it stops — otherwise the operator turns
+        // the feature off and is left with a radio that appears dead.
+        endpoints.MapGet("af-gain", async (CancellationToken ct) =>
+            Results.Ok(new { db = await _radio!.ReadAfGainAsync(ct).ConfigureAwait(false) }));
+
+        endpoints.MapPost("af-gain", async (AfGainBody body, CancellationToken ct) =>
+            await _radio!.SetAfGainAsync(body.Db, ct).ConfigureAwait(false)
+                ? Results.Ok(new { ok = true, db = body.Db })
+                : Results.StatusCode(502));
 
         endpoints.MapPost("config", async (StoredConfig body, CancellationToken ct) =>
         {
@@ -241,6 +333,8 @@ public sealed class UbersdrPlugin : IZeusPlugin, IBackendPlugin
 
     private static string Trim(string s) =>
         s.Length <= 300 ? s : s[..300] + "…";
+
+    public sealed class AfGainBody { public double Db { get; set; } }
 
     private static object Dto(UberSdrInstance i) => new
     {
